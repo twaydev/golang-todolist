@@ -1,0 +1,37 @@
+name: rest-api/versioning
+description: API versioning strategies
+category: api
+language: agnostic
+
+overview: API versioning allows evolving the API without breaking existing clients.
+
+versioning_strategies: |
+  # 1. URL Path Versioning (Most common)
+  GET /api/v1/todos
+  GET /api/v2/todos
+  
+  # 2. Header Versioning
+  GET /api/todos
+  Accept: application/vnd.api.v1+json
+  
+  # 3. Query Parameter
+  GET /api/todos?version=1
+
+best_practices:
+  - Version from day one
+  - Use URL path versioning (simplest)
+  - Support multiple versions temporarily
+  - Deprecate old versions with warning period
+  - Document breaking changes clearly
+
+example: |
+  # v1: Returns simple todo
+  GET /api/v1/todos/123
+  { "id": "123", "title": "Buy milk" }
+  
+  # v2: Returns enriched todo
+  GET /api/v2/todos/123
+  { "id": "123", "title": "Buy milk", "created_by": {...} }
+
+resources:
+  best_practices: https://restfulapi.net/versioning/

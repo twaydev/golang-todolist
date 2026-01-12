@@ -1,0 +1,44 @@
+name: golang/structs
+description: Go struct design patterns and best practices
+category: golang
+language: go
+
+overview: Structs are Go's way of creating complex data types by grouping fields together.
+
+basic_struct: |
+  type Todo struct {
+      ID       string
+      Title    string
+      Priority Priority
+      Tags     []string
+  }
+
+struct_embedding: |
+  type BaseEntity struct {
+      ID        string
+      CreatedAt time.Time
+      UpdatedAt time.Time
+  }
+  
+  type Todo struct {
+      BaseEntity  // Embedded struct
+      Title string
+  }
+  
+  todo := Todo{}
+  todo.ID = "123"  // Access embedded fields directly
+
+struct_tags: |
+  type Todo struct {
+      ID    string `json:"id" db:"id" validate:"required"`
+      Title string `json:"title" db:"title" validate:"required,max=500"`
+  }
+
+best_practices:
+  - Use pointer receivers for methods that modify struct
+  - Keep structs focused (Single Responsibility)
+  - Use embedding for composition
+  - Validate in constructor functions
+
+resources:
+  documentation: https://go.dev/tour/moretypes/2

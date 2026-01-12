@@ -1,0 +1,57 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+build/
+dist/
+
+# Test & Coverage
+*.test
+*.out
+coverage*.out
+coverage*.html
+.nyc_output/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Go
+vendor/
+go.work
+go.work.sum
+
+# Temporary
+tmp/
+temp/
+*.log
+*.pid
+
+# Railway
+.railway/
+
+# Factory.ai artifacts
+~/.factory/artifacts/
+
+# Build artifacts
+*.test
+*.prof

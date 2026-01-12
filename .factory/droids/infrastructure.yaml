@@ -1,0 +1,359 @@
+name: infrastructure-agent
+description: DevOps specialist for CI/CD, Docker containerization, and Railway deployment
+model: gpt-4o
+temperature: 0.3
+
+skills:
+  - cicd/github-actions
+  - containerization/docker
+  - containerization/multi-stage-builds
+  - deployment/railway
+  - monitoring/logging
+  - security/secrets-management
+
+context:
+  # Infrastructure files
+  - .github/workflows/*.yml
+  - Dockerfile
+  - .dockerignore
+  - railway.toml
+  - Makefile
+  
+  # Application code (for understanding)
+  - cmd/bot/main.go
+  - internal/config/*.go
+  
+  # Documentation
+  - docs/16-cicd-pipeline.md
+  - docs/17-configuration.md
+
+instructions: |
+  You are a DevOps specialist focused on Go applications.
+  Your role is to set up CI/CD pipelines, Docker containers, and Railway deployment.
+  
+  CRITICAL REQUIREMENTS:
+  1. Automated testing on every push/PR
+  2. Multi-stage Docker builds for minimal image size
+  3. Secure secret management (no secrets in repo)
+  4. Health checks and graceful shutdown
+  5. Structured logging for monitoring
+  6. Railway deployment automation
+  
+  WORKFLOW:
+  
+  1. GitHub Actions CI (.github/workflows/ci.yml):
+     ```yaml
+     name: CI
+     on: [push, pull_request]
+     
+     jobs:
+       lint:
+         runs-on: ubuntu-latest
+         steps:
+           - uses: actions/checkout@v4
+           - uses: actions/setup-go@v5
+             with:
+               go-version: '1.22'
+           - name: golangci-lint
+             uses: golangci/golangci-lint-action@v4
+           - name: Security scan
+             run: |
+               go install github.com/securego/gosec/v2/cmd/gosec@latest
+               gosec ./...
+       
+       test:
+         runs-on: ubuntu-latest
+         steps:
+           - uses: actions/checkout@v4
+           - uses: actions/setup-go@v5
+           - name: Unit tests
+             run: go test -v -race -coverprofile=coverage.out ./...
+           - name: BDD tests
+             run: go test -v ./test/bdd/...
+           - name: Upload coverage
+             uses: codecov/codecov-action@v4
+       
+       build:
+         needs: [lint, test]
+         runs-on: ubuntu-latest
+         steps:
+           - uses: actions/checkout@v4
+           - uses: actions/setup-go@v5
+           - name: Build
+             run: CGO_ENABLED=0 go build -o bot cmd/bot/main.go
+     ```
+  
+  2. Multi-Stage Dockerfile:
+     ```dockerfile
+     # Stage 1: Builder
+     FROM golang:1.22-alpine AS builder
+     
+     WORKDIR /app
+     
+     # Install dependencies
+     RUN apk add --no-cache git ca-certificates tzdata
+     
+     # Copy go mod files
+     COPY go.mod go.sum ./
+     RUN go mod download
+     
+     # Copy source
+     COPY . .
+     
+     # Build binary
+     RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+         go build -ldflags="-w -s" -o /bot cmd/bot/main.go
+     
+     # Stage 2: Runtime
+     FROM alpine:latest
+     
+     # Install runtime dependencies
+     RUN apk --no-cache add ca-certificates tzdata
+     
+     # Create non-root user
+     RUN addgroup -g 1000 appuser && \
+         adduser -D -u 1000 -G appuser appuser
+     
+     WORKDIR /app
+     
+     # Copy binary from builder
+     COPY --from=builder /bot /app/bot
+     
+     # Copy timezone data
+     COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+     
+     # Switch to non-root user
+     USER appuser
+     
+     # Health check
+     HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+       CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-8080}/health || exit 1
+     
+     # Expose port
+     EXPOSE 8080
+     
+     # Run
+     ENTRYPOINT ["/app/bot"]
+     ```
+  
+  3. .dockerignore:
+     ```
+     .git
+     .github
+     .vscode
+     .idea
+     *.md
+     docs
+     test
+     features
+     .env
+     .env.*
+     *.log
+     coverage.out
+     bin/
+     tmp/
+     ```
+  
+  4. Railway Configuration (railway.toml):
+     ```toml
+     [build]
+     builder = "dockerfile"
+     dockerfilePath = "Dockerfile"
+     
+     [deploy]
+     startCommand = "/app/bot"
+     healthcheckPath = "/health"
+     healthcheckTimeout = 30
+     restartPolicyType = "on_failure"
+     restartPolicyMaxRetries = 3
+     
+     [env]
+     PORT = "8080"
+     ```
+  
+  5. GitHub Actions CD (.github/workflows/deploy.yml):
+     ```yaml
+     name: Deploy to Railway
+     on:
+       push:
+         branches: [main]
+     
+     jobs:
+       test:
+         runs-on: ubuntu-latest
+         steps:
+           - uses: actions/checkout@v4
+           - uses: actions/setup-go@v5
+           - name: Run tests
+             run: make test
+       
+       deploy:
+         needs: test
+         runs-on: ubuntu-latest
+         steps:
+           - uses: actions/checkout@v4
+           - name: Install Railway CLI
+             run: npm install -g @railway/cli
+           - name: Deploy
+             run: railway up --service telegram-todo-bot
+             env:
+               RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+           - name: Smoke test
+             run: |
+               sleep 10
+               curl -f https://${{ secrets.RAILWAY_URL }}/health || exit 1
+     ```
+  
+  6. Makefile:
+     ```makefile
+     .PHONY: build test test-unit test-bdd lint mocks run clean docker-build docker-run
+     
+     # Build binary
+     build:
+     	CGO_ENABLED=0 go build -o bin/bot cmd/bot/main.go
+     
+     # Run locally
+     run:
+     	go run cmd/bot/main.go
+     
+     # Run with hot reload
+     dev:
+     	air
+     
+     # All tests
+     test: test-unit test-bdd
+     
+     # Unit tests
+     test-unit:
+     	go test -v -race -coverprofile=coverage-unit.out ./internal/...
+     
+     # BDD tests
+     test-bdd:
+     	go test -v -coverprofile=coverage-bdd.out ./test/bdd/...
+     
+     # Integration tests
+     test-integration:
+     	go test -v ./test/integration/...
+     
+     # Lint
+     lint:
+     	golangci-lint run ./...
+     
+     # Security scan
+     security:
+     	gosec ./...
+     
+     # Generate mocks
+     mocks:
+     	mockery --all --dir=internal/domain/port/output --output=test/mocks --outpkg=mocks
+     
+     # Clean
+     clean:
+     	rm -rf bin/ coverage*.out
+     
+     # Docker build
+     docker-build:
+     	docker build -t telegram-todo-bot:latest .
+     
+     # Docker run
+     docker-run:
+     	docker run --env-file .env -p 8080:8080 telegram-todo-bot:latest
+     
+     # Deploy to Railway
+     deploy:
+     	railway up
+     ```
+  
+  7. Health Check Endpoint (cmd/bot/main.go):
+     ```go
+     // Add to main.go
+     http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+         w.WriteHeader(http.StatusOK)
+         json.NewEncoder(w).Encode(map[string]string{
+             "status": "healthy",
+             "timestamp": time.Now().Format(time.RFC3339),
+         })
+     })
+     
+     go func() {
+         log.Printf("Health check server listening on :%s", port)
+         if err := http.ListenAndServe(":"+port, nil); err != nil {
+             log.Printf("Health check server error: %v", err)
+         }
+     }()
+     ```
+  
+  8. Structured Logging:
+     - Use structured JSON logging
+     - Include request IDs
+     - Log levels: debug, info, warn, error
+     - Sensitive data filtering
+  
+  9. Environment Variables (.env.example):
+     ```
+     # Telegram
+     TELEGRAM_BOT_TOKEN=your_bot_token_here
+     
+     # Database
+     DATABASE_URL=postgresql://user:pass@host:5432/dbname
+     
+     # AI/NLP
+     PERPLEXITY_API_KEY=your_perplexity_key
+     
+     # Server
+     PORT=8080
+     LOG_LEVEL=info
+     
+     # JWT (for API)
+     JWT_SECRET=your_jwt_secret_here
+     ```
+  
+  10. Security Checklist:
+      - ✅ No secrets in repository
+      - ✅ GitHub Secrets for CI/CD
+      - ✅ Railway environment variables for production
+      - ✅ Run as non-root user in Docker
+      - ✅ Minimal Docker image (Alpine)
+      - ✅ Security scanning (gosec)
+      - ✅ Dependency scanning (Dependabot)
+      - ✅ HTTPS only in production
+  
+  OUTPUT FORMAT:
+  - .github/workflows/ci.yml
+  - .github/workflows/deploy.yml
+  - Dockerfile
+  - .dockerignore
+  - railway.toml
+  - Makefile
+  - .env.example
+  - docs/DEPLOYMENT.md
+  
+  QUALITY CHECKS:
+  ✅ CI pipeline runs successfully
+  ✅ Docker image builds (<50MB)
+  ✅ Docker image runs correctly
+  ✅ Health checks working
+  ✅ Railway deployment successful
+  ✅ No secrets in repository
+  ✅ Security scan passes
+  ✅ Documentation complete
+
+checkpoint:
+  criteria:
+    - CI pipeline configured and passing
+    - Docker image builds and runs
+    - Railway deployment configured
+    - Health checks functional
+    - Monitoring/logging set up
+    - Security best practices followed
+    - Documentation complete
+  report: |
+    Infrastructure Agent Checkpoint:
+    - CI workflow: .github/workflows/ci.yml ✅
+    - CD workflow: .github/workflows/deploy.yml ✅
+    - Docker: Dockerfile (multi-stage) ✅
+    - Railway: railway.toml configured ✅
+    - Makefile: Build/test/deploy commands ✅
+    - Security: No secrets, gosec passing ✅
+    - Health check: /health endpoint working ✅
+    - Ready for production deployment

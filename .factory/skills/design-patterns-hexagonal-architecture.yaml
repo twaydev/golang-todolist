@@ -1,0 +1,425 @@
+name: design-patterns/hexagonal-architecture
+description: Ports and Adapters pattern for clean, testable, maintainable architecture
+category: architecture
+language: agnostic
+
+overview: |
+  Hexagonal Architecture (Ports and Adapters) is an architectural pattern
+  that isolates business logic from external concerns (databases, web frameworks,
+  APIs). It enables easy testing, technology swapping, and maintains clean
+  separation of concerns.
+
+aliases:
+  - Ports and Adapters
+  - Onion Architecture
+  - Clean Architecture (similar concepts)
+
+core_principles:
+  - Business logic at the center (domain)
+  - Domain has zero infrastructure dependencies
+  - External concerns communicate via ports (interfaces)
+  - Adapters implement ports (concrete implementations)
+  - Dependency inversion (domain defines interfaces, infrastructure implements)
+
+architecture_layers: |
+  ┌─────────────────────────────────────────────────────────────┐
+  │                    DRIVING ADAPTERS                         │
+  │                   (Primary/Input)                           │
+  │  ┌───────────┐  ┌───────────┐  ┌───────────┐              │
+  │  │  HTTP API │  │ Telegram  │  │  CLI      │              │
+  │  │  Adapter  │  │  Bot      │  │  Adapter  │              │
+  │  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘              │
+  └────────┼──────────────┼──────────────┼────────────────────┘
+           │              │              │
+           ▼              ▼              ▼
+  ┌────────────────────────────────────────────────────────────┐
+  │                    INPUT PORTS                             │
+  │         (Interfaces driving adapters use)                  │
+  └────────────────────────┬───────────────────────────────────┘
+                           │
+                           ▼
+  ┌────────────────────────────────────────────────────────────┐
+  │                  DOMAIN / CORE                             │
+  │                                                            │
+  │  ┌─────────────────┐  ┌─────────────────┐                │
+  │  │    Entities     │  │    Services     │                │
+  │  │ (Business Rules)│  │  (Use Cases)    │                │
+  │  └─────────────────┘  └─────────────────┘                │
+  │                                                            │
+  └────────────────────────┬───────────────────────────────────┘
+                           │
+                           ▼
+  ┌────────────────────────────────────────────────────────────┐
+  │                   OUTPUT PORTS                             │
+  │        (Interfaces domain needs from outside)              │
+  └────────────────────────┬───────────────────────────────────┘
+           │              │              │
+           ▼              ▼              ▼
+  ┌────────┴──────┐ ┌────┴────────┐ ┌──┴──────────┐
+  │  PostgreSQL   │ │ Perplexity  │ │  Email      │
+  │  Adapter      │ │ AI Adapter  │ │  Adapter    │
+  └───────────────┘ └─────────────┘ └─────────────┘
+           │              │              │
+  ┌────────┴──────────────┴──────────────┴──────────────────────┐
+  │                   DRIVEN ADAPTERS                           │
+  │                  (Secondary/Output)                         │
+  └─────────────────────────────────────────────────────────────┘
+
+directory_structure: |
+  project/
+  ├── internal/
+  │   │
+  │   ├── domain/                    # CORE (Business Logic)
+  │   │   ├── entity/               # Domain entities
+  │   │   │   ├── todo.go
+  │   │   │   ├── user.go
+  │   │   │   └── intent.go
+  │   │   ├── service/              # Application services
+  │   │   │   ├── todo_service.go
+  │   │   │   └── user_service.go
+  │   │   └── port/                 # Port interfaces
+  │   │       ├── input/            # Driving ports (optional)
+  │   │       │   └── message_handler.go
+  │   │       └── output/           # Driven ports
+  │   │           ├── todo_repository.go
+  │   │           ├── intent_analyzer.go
+  │   │           └── notifier.go
+  │   │
+  │   └── adapter/                   # INFRASTRUCTURE
+  │       ├── driving/               # Primary adapters (INPUT)
+  │       │   ├── http/             # REST API
+  │       │   │   ├── server.go
+  │       │   │   ├── handlers.go
+  │       │   │   └── dto.go
+  │       │   └── telegram/         # Telegram bot
+  │       │       ├── bot.go
+  │       │       └── handlers.go
+  │       └── driven/                # Secondary adapters (OUTPUT)
+  │           ├── postgres/          # Database
+  │           │   ├── connection.go
+  │           │   └── todo_repo.go
+  │           ├── perplexity/        # AI service
+  │           │   └── client.go
+  │           └── memory/            # In-memory (testing)
+  │               └── todo_repo.go
+
+domain_layer_example: |
+  // internal/domain/entity/todo.go
+  package entity
+
+  import "time"
+
+  // Domain entity - pure business logic, no infrastructure
+  type Todo struct {
+      ID             string
+      TelegramUserID int64
+      Title          string
+      Description    *string
+      DueDate        *time.Time
+      Priority       Priority
+      Status         Status
+      CreatedAt      time.Time
+      UpdatedAt      time.Time
+  }
+
+  // Business rules as methods
+  func (t *Todo) Validate() error {
+      if t.Title == "" {
+          return ErrTitleRequired
+      }
+      if len(t.Title) > 500 {
+          return ErrTitleTooLong
+      }
+      return nil
+  }
+
+  func (t *Todo) MarkComplete() {
+      t.Status = StatusCompleted
+      t.UpdatedAt = time.Now()
+  }
+
+  func (t *Todo) IsOverdue() bool {
+      if t.DueDate == nil || t.Status == StatusCompleted {
+          return false
+      }
+      return time.Now().After(*t.DueDate)
+  }
+
+output_port_example: |
+  // internal/domain/port/output/todo_repository.go
+  package output
+
+  import (
+      "context"
+      "todobot/internal/domain/entity"
+  )
+
+  // Output port - interface defined by domain
+  type TodoRepository interface {
+      Create(ctx context.Context, todo *entity.Todo) error
+      Update(ctx context.Context, todo *entity.Todo) error
+      Delete(ctx context.Context, userID int64, todoID string) error
+      GetByID(ctx context.Context, userID int64, todoID string) (*entity.Todo, error)
+      List(ctx context.Context, userID int64, filters ListFilters) ([]*entity.Todo, error)
+  }
+
+  // Domain doesn't care HOW this is implemented
+  // Could be PostgreSQL, MongoDB, in-memory, etc.
+
+service_example: |
+  // internal/domain/service/todo_service.go
+  package service
+
+  import (
+      "context"
+      "todobot/internal/domain/entity"
+      "todobot/internal/domain/port/output"
+  )
+
+  // Application service - orchestrates business logic
+  type TodoService struct {
+      todoRepo       output.TodoRepository     // Port interface
+      userRepo       output.UserRepository
+      intentAnalyzer output.IntentAnalyzer
+  }
+
+  // Constructor with dependency injection
+  func NewTodoService(
+      todoRepo output.TodoRepository,
+      userRepo output.UserRepository,
+      intentAnalyzer output.IntentAnalyzer,
+  ) *TodoService {
+      return &TodoService{
+          todoRepo:       todoRepo,
+          userRepo:       userRepo,
+          intentAnalyzer: intentAnalyzer,
+      }
+  }
+
+  // Business logic - uses ports, no direct infrastructure access
+  func (s *TodoService) CreateTodo(
+      ctx context.Context,
+      userID int64,
+      title string,
+      options *CreateOptions,
+  ) (*entity.Todo, error) {
+      // Create entity
+      todo := &entity.Todo{
+          TelegramUserID: userID,
+          Title:          title,
+          Status:         entity.StatusPending,
+          Priority:       entity.PriorityMedium,
+      }
+
+      // Apply options
+      if options != nil {
+          if options.Priority != nil {
+              todo.Priority = *options.Priority
+          }
+          if options.DueDate != nil {
+              todo.DueDate = options.DueDate
+          }
+      }
+
+      // Validate (business rule)
+      if err := todo.Validate(); err != nil {
+          return nil, err
+      }
+
+      // Persist via port
+      if err := s.todoRepo.Create(ctx, todo); err != nil {
+          return nil, err
+      }
+
+      return todo, nil
+  }
+
+driven_adapter_example: |
+  // internal/adapter/driven/postgres/todo_repo.go
+  package postgres
+
+  import (
+      "context"
+      "github.com/jackc/pgx/v5/pgxpool"
+      "todobot/internal/domain/entity"
+      "todobot/internal/domain/port/output"
+  )
+
+  // Driven adapter - implements output port
+  type PostgresTodoRepository struct {
+      pool *pgxpool.Pool
+  }
+
+  func NewPostgresToDoRepository(pool *pgxpool.Pool) output.TodoRepository {
+      return &PostgresTodoRepository{pool: pool}
+  }
+
+  // Implements output.TodoRepository interface
+  func (r *PostgresTodoRepository) Create(ctx context.Context, todo *entity.Todo) error {
+      query := `INSERT INTO todos (telegram_user_id, title, description, priority, status)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id, code, created_at, updated_at`
+      
+      return r.pool.QueryRow(ctx, query,
+          todo.TelegramUserID, todo.Title, todo.Description,
+          todo.Priority, todo.Status,
+      ).Scan(&todo.ID, &todo.Code, &todo.CreatedAt, &todo.UpdatedAt)
+  }
+
+  // ... other repository methods
+
+driving_adapter_example: |
+  // internal/adapter/driving/http/handlers.go
+  package http
+
+  import (
+      "net/http"
+      "github.com/labstack/echo/v4"
+      "todobot/internal/domain/service"
+  )
+
+  // Driving adapter - uses domain service
+  type TodoHandler struct {
+      todoService *service.TodoService
+  }
+
+  func NewTodoHandler(todoService *service.TodoService) *TodoHandler {
+      return &TodoHandler{todoService: todoService}
+  }
+
+  // Handler translates HTTP request to domain call
+  func (h *TodoHandler) CreateTodo(c echo.Context) error {
+      // 1. Parse HTTP request (adapter concern)
+      var req CreateTodoRequest
+      if err := c.Bind(&req); err != nil {
+          return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+      }
+
+      // 2. Map DTO to domain types (adapter concern)
+      userID := getUserIDFromContext(c)
+      options := req.toOptions()
+
+      // 3. Call domain service (business logic)
+      todo, err := h.todoService.CreateTodo(
+          c.Request().Context(),
+          userID,
+          req.Title,
+          options,
+      )
+      if err != nil {
+          return h.mapDomainError(err)
+      }
+
+      // 4. Map domain entity to DTO (adapter concern)
+      response := toTodoResponse(todo)
+
+      // 5. Return HTTP response (adapter concern)
+      return c.JSON(http.StatusCreated, response)
+  }
+
+dependency_injection: |
+  // cmd/bot/main.go
+  package main
+
+  import (
+      "log"
+      "todobot/internal/adapter/driven/postgres"
+      "todobot/internal/adapter/driven/perplexity"
+      "todobot/internal/adapter/driving/http"
+      "todobot/internal/adapter/driving/telegram"
+      "todobot/internal/domain/service"
+  )
+
+  func main() {
+      // 1. Initialize driven adapters (output ports)
+      db := postgres.NewConnection(cfg.DatabaseURL)
+      todoRepo := postgres.NewTodoRepository(db)
+      userRepo := postgres.NewUserRepository(db)
+      intentAnalyzer := perplexity.NewClient(cfg.PerplexityAPIKey)
+
+      // 2. Initialize domain services (inject dependencies)
+      todoService := service.NewTodoService(todoRepo, userRepo, intentAnalyzer)
+      userService := service.NewUserService(userRepo)
+
+      // 3. Initialize driving adapters (inject services)
+      httpServer := http.NewServer(todoService, userService, cfg)
+      telegramBot := telegram.NewBot(todoService, userService, cfg.TelegramToken)
+
+      // 4. Start adapters
+      go httpServer.Start(":8080")
+      telegramBot.Start()
+  }
+
+testing_with_hexagonal: |
+  // Test domain service with in-memory adapter
+  func TestTodoService_CreateTodo(t *testing.T) {
+      // Arrange - use in-memory adapter (no database needed!)
+      todoRepo := memory.NewTodoRepository()
+      userRepo := memory.NewUserRepository()
+      
+      service := service.NewTodoService(todoRepo, userRepo, nil)
+
+      // Act
+      todo, err := service.CreateTodo(context.Background(), 123, "Buy milk", nil)
+
+      // Assert
+      require.NoError(t, err)
+      assert.Equal(t, "Buy milk", todo.Title)
+      assert.Equal(t, entity.StatusPending, todo.Status)
+  }
+
+  // Test with mocks
+  func TestTodoService_CreateTodo_WithMocks(t *testing.T) {
+      // Arrange
+      mockRepo := mocks.NewMockTodoRepository(t)
+      mockRepo.EXPECT().Create(mock.Anything, mock.Anything).Return(nil)
+
+      service := service.NewTodoService(mockRepo, nil, nil)
+
+      // Act & Assert
+      todo, err := service.CreateTodo(context.Background(), 123, "Buy milk", nil)
+      require.NoError(t, err)
+      
+      mockRepo.AssertExpectations(t)
+  }
+
+benefits:
+  - "Testability: Domain can be tested without infrastructure"
+  - "Technology independence: Easy to swap databases, frameworks"
+  - "Maintainability: Clear separation of concerns"
+  - "Parallel development: Domain and adapters can be built independently"
+  - "Business logic clarity: Domain code is pure business rules"
+  - "Flexibility: Multiple adapters for same port (HTTP + gRPC + CLI)"
+
+rules:
+  - "Domain NEVER imports from adapter packages"
+  - "Domain defines interfaces (ports), adapters implement them"
+  - "Entities contain business rules, not infrastructure concerns"
+  - "Services orchestrate business logic using ports"
+  - "Adapters translate between external world and domain"
+  - "Dependencies point inward (toward domain)"
+
+common_mistakes:
+  - "Putting business logic in adapters (handlers, repositories)"
+  - "Domain importing database or HTTP packages"
+  - "Exposing domain entities directly in API responses"
+  - "Mixing validation rules across layers"
+  - "Leaking infrastructure errors to domain"
+  - "Not using dependency injection"
+
+best_practices:
+  - Define ports as interfaces in domain/port/
+  - Use dependency injection in main.go
+  - Keep domain entities rich (not anemic)
+  - Map between DTOs and domain entities in adapters
+  - Use context.Context for cancellation
+  - Test domain with in-memory adapters
+  - One service per aggregate root
+  - Services are stateless
+
+resources:
+  original_article: https://alistair.cockburn.us/hexagonal-architecture/
+  clean_architecture_book: "Clean Architecture by Robert C. Martin"
+  example_projects:
+    - https://github.com/bxcodec/go-clean-arch
+    - https://github.com/ThreeDotsLabs/wild-workouts-go-ddd-example

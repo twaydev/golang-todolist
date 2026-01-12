@@ -1,0 +1,369 @@
+name: linear-integration
+description: Integration with Linear for issue tracking and project management
+category: project-management
+
+overview: |
+  Linear is a modern issue tracking and project management tool. Factory.ai provides
+  native integration with Linear through FetchUrl tool and potentially MCP servers.
+  
+  This skill covers creating epics, issues, updating status, posting comments, and
+  reading issue details for orchestration workflows.
+
+concepts:
+  - name: Linear Workspace
+    description: Top-level organization containing teams and projects
+    
+  - name: Projects
+    description: Collections of issues for specific initiatives
+    
+  - name: Teams
+    description: Groups of people working together
+    
+  - name: Issues
+    description: Individual tasks or work items
+    
+  - name: Epics
+    description: Large features composed of multiple issues
+    
+  - name: Labels
+    description: Tags for categorizing and filtering issues
+    
+  - name: Workflow States
+    description: Issue lifecycle (Backlog, In Progress, Done, etc.)
+    
+  - name: Comments
+    description: Discussion and updates on issues
+
+patterns:
+  - name: Reading Issue Details
+    description: Fetch issue information using FetchUrl
+    example: |
+      # In Factory.ai droid
+      Use FetchUrl with Linear issue URL:
+      https://linear.app/workspace/issue/ABC-123
+      
+      This returns:
+      - Issue title and description
+      - Current status
+      - Labels
+      - Comments
+      - Assignee
+      - Parent epic
+
+  - name: Creating Epic
+    description: Create a feature epic in Linear
+    example: |
+      Epic structure:
+      
+      Title: [Feature] Create Todo with Priority
+      
+      Description:
+      ## User Story
+      As a user, I want to create todos with priority so that
+      I can organize my work by importance.
+      
+      ## Requirements
+      - POST /api/v1/todos endpoint
+      - Priority field (low/medium/high)
+      - Validation
+      
+      ## Acceptance Criteria
+      - [ ] Unit tests pass
+      - [ ] API endpoint works
+      - [ ] Deployed
+      
+      Labels: type:feature
+      Project: Golang TodoList Bot
+      Team: Development
+
+  - name: Creating Phase Issues
+    description: Break epic into agent-specific tasks
+    example: |
+      Phase 1 Issue:
+      Title: [Test-First] Write tests for Create Todo
+      Parent: ABC-123 (epic)
+      Labels: agent:test-first, phase:1-red
+      State: Ready
+      
+      Description:
+      Write BDD scenarios and unit tests (RED state).
+      See: orchestrator/templates/task-test-first.md
+      
+      Phase 2 Issues (parallel):
+      1. [Domain] Implement entity and service
+         Labels: agent:domain-logic, phase:2-green
+         Blocked by: Phase 1 issue
+      
+      2. [Database] Create schema and repository
+         Labels: agent:database, phase:2-green
+         Blocked by: Phase 1 issue
+
+  - name: Posting Completion Signal
+    description: Agent posts comment when done
+    example: |
+      ✅ test-first-agent complete
+      
+      Files created:
+      - features/todo_create.feature
+      - test/bdd/todo_steps_test.go
+      - test/unit/domain/todo_service_test.go
+      
+      Test status: All FAILING (RED) ❌ (as expected)
+      
+      Scenarios: 8 total
+      Unit tests: 12 total
+      
+      Ready for Phase 2 (domain-logic-agent + database-agent).
+
+  - name: Reporting Blocker
+    description: Agent signals it's blocked
+    example: |
+      ⚠️ BLOCKED
+      
+      Reason: Missing interface definition for TodoRepository
+      Needs: @orchestrator to clarify what methods are needed
+      
+      Cannot proceed until resolved.
+
+  - name: Asking Question
+    description: Agent needs clarification
+    example: |
+      ❓ Question for @orchestrator
+      
+      Should priority enum be low/medium/high or p1/p2/p3/p4?
+      
+      Current domain design uses: low/medium/high
+      But docs mention: p1/p2/p3/p4
+      
+      Waiting for guidance.
+
+  - name: Orchestrator Response
+    description: Orchestrator provides clarification
+    example: |
+      @domain-logic-agent
+      
+      Use: low/medium/high (more user-friendly)
+      
+      The p1/p2/p3/p4 reference was from old design.
+      Updated AGENTS.md to clarify.
+      
+      Please proceed with low/medium/high.
+
+  - name: Updating Issue Status
+    description: Change workflow state
+    example: |
+      Workflow progression:
+      
+      Backlog → Ready
+        (when orchestrator starts phase)
+      
+      Ready → In Progress
+        (when agent begins work)
+      
+      In Progress → Tests RED
+        (Phase 1 complete)
+      
+      Tests RED → Tests GREEN
+        (Phase 2 complete)
+      
+      Tests GREEN → Review
+        (Phase 3 complete)
+      
+      Review → Done
+        (Phase 4 complete, all validated)
+
+  - name: Tracking Epic Progress
+    description: Monitor overall feature completion
+    example: |
+      Epic: ABC-123 (Create Todo with Priority)
+      
+      Progress: 5 of 6 issues complete (83%)
+      
+      ✅ ABC-124: [Test-First] Write tests
+      ✅ ABC-125: [Domain] Implement entity
+      ✅ ABC-126: [Database] Create schema
+      ✅ ABC-127: [Adapter] REST API
+      ✅ ABC-128: [AI/NLP] Intent parsing
+      ⏳ ABC-129: [Infrastructure] Deploy (in progress)
+      
+      Estimated completion: 20 minutes
+
+best_practices:
+  - Use consistent label naming (agent:X, phase:Y)
+  - Post detailed completion signals with file lists
+  - Report blockers immediately
+  - Ask questions early rather than making assumptions
+  - Keep issue descriptions up to date
+  - Link related issues and epics
+  - Use markdown formatting in comments
+  - Reference code files and line numbers
+  - Tag relevant people (@orchestrator)
+  - Update status when changing phases
+
+gotchas:
+  - FetchUrl may have rate limits - cache results when possible
+  - Linear URLs must be public or Factory must have access
+  - Issue dependencies may not block in Linear UI (manual tracking)
+  - Labels must exist in workspace before use
+  - Custom workflow states must be configured
+  - Comments are chronological - latest may be buried
+  - Epic progress calculation may not include all issues
+
+integration_with_factory:
+  - name: FetchUrl Tool
+    description: Read Linear issue details
+    usage: |
+      In droid:
+      Use FetchUrl tool with Linear issue URL
+      URL format: https://linear.app/{workspace}/issue/{id}
+      
+      Returns markdown with:
+      - Title, description
+      - Status, labels
+      - Comments
+      - Metadata
+
+  - name: Linear MCP Server
+    description: Full Linear API access (if configured)
+    usage: |
+      If Linear MCP is configured in .factory/mcp.json:
+      - Create/update/delete issues
+      - Manage labels and projects
+      - Query issues with filters
+      - Bulk operations
+      
+      Check: https://docs.factory.ai/cli/configuration/mcp
+
+  - name: Droid Context
+    description: Reference Linear issues in droid context
+    usage: |
+      In orchestrator.yaml:
+      context:
+        - Linear issue URL (via FetchUrl)
+        - orchestrator/templates/*.md
+        - AGENTS.md
+      
+      Orchestrator can read issue details and pass to agents
+
+workflow_example: |
+  Complete orchestration flow with Linear:
+  
+  1. Orchestrator receives user story
+  2. Creates Linear epic via FetchUrl or MCP
+  3. Creates 6 Linear issues (one per phase/agent)
+  4. Sets labels and dependencies
+  5. Starts Phase 1:
+     - Fetches Phase 1 issue details
+     - Passes to test-first-agent
+     - Agent reads requirements from issue
+     - Agent writes tests
+     - Agent posts completion comment
+  6. Orchestrator reads completion comment
+  7. Runs checkpoint validation
+  8. Updates issue status: "Tests RED"
+  9. Proceeds to Phase 2 (repeats process)
+  10. After Phase 4, marks epic as Done
+
+labels_to_create:
+  agents:
+    - agent:test-first
+    - agent:domain-logic
+    - agent:database
+    - agent:adapter
+    - agent:ai-nlp
+    - agent:infrastructure
+  
+  phases:
+    - phase:1-red
+    - phase:2-green
+    - phase:3-adapters
+    - phase:4-deploy
+  
+  status:
+    - status:blocked
+    - status:in-progress
+    - status:review
+  
+  types:
+    - type:feature
+    - type:bug
+    - type:refactor
+    - type:chore
+
+workflow_states:
+  - Backlog
+  - Ready
+  - In Progress
+  - Tests RED
+  - Tests GREEN
+  - Review
+  - Done
+  - Canceled
+
+resources:
+  - Linear API Docs: https://developers.linear.app/docs
+  - Factory Linear Integration: https://docs.factory.ai/onboarding/integrating-with-your-engineering-system/linear
+  - Linear GraphQL API: https://studio.apollographql.com/public/Linear-API/home
+  - MCP Configuration: https://docs.factory.ai/cli/configuration/mcp
+
+examples:
+  - name: Orchestrator Starting Phase 1
+    description: Fetch issue and pass to agent
+    code: |
+      # Orchestrator droid
+      1. Use FetchUrl with Phase 1 issue URL
+      2. Read issue title, description, requirements
+      3. Switch to test-first-agent
+      4. Pass issue context: "Work on {issue_url}"
+      5. Agent reads FetchUrl data
+      6. Agent completes work
+      7. Agent posts completion comment
+      8. Orchestrator reads comment via FetchUrl
+      9. Validates checkpoint
+      10. Proceeds to next phase
+
+  - name: Agent Reporting Progress
+    description: Post structured comment
+    code: |
+      Comment on Linear issue:
+      
+      ✅ domain-logic-agent complete
+      
+      Files created:
+      - internal/domain/entity/todo.go (125 lines)
+      - internal/domain/entity/priority.go (15 lines)
+      - internal/domain/port/output/todo_repository.go (42 lines)
+      - internal/domain/service/todo_service.go (180 lines)
+      
+      Test status: All PASSING (GREEN) ✅
+      
+      Unit tests: 15 passed (0 failed)
+      Architecture violations: 0 ✅
+      No infrastructure imports detected ✅
+      
+      Checkpoint validation: Ready
+      
+      Ready for Phase 3 (api-adapter-agent + ai-nlp-agent).
+
+  - name: Handling Dependencies
+    description: Block issues on previous phases
+    code: |
+      Phase 2 issues depend on Phase 1:
+      
+      In Linear:
+      1. Create Phase 1 issue (ABC-124)
+      2. Create Phase 2 issue (ABC-125)
+      3. In ABC-125, add "Blocked by: ABC-124"
+      
+      Orchestrator workflow:
+      1. Start ABC-124 (Phase 1)
+      2. Wait for ABC-124 completion
+      3. Validate checkpoint
+      4. Update ABC-124 status: Done
+      5. Remove blocker from ABC-125
+      6. Start ABC-125 (Phase 2)
+
+see_also:
+  - github-actions (for CI/CD automation)
+  - project-management (general principles)
+  - Factory.ai Linear docs

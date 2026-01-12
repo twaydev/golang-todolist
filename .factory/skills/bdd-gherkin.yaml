@@ -1,0 +1,178 @@
+name: bdd/gherkin
+description: Gherkin syntax for writing behavior-driven development scenarios
+category: testing
+language: gherkin
+
+overview: |
+  Gherkin is a business-readable DSL (Domain Specific Language) for describing
+  software behavior without detailing implementation. It uses plain English with
+  keywords to structure executable specifications.
+
+basic_structure: |
+  Feature: Short description
+    As a [role]
+    I want [feature]
+    So that [benefit]
+    
+    Background:
+      Given [precondition]
+    
+    Scenario: Description of scenario
+      Given [initial context]
+      When [event/action]
+      Then [expected outcome]
+      And [additional outcome]
+
+keywords: |
+  # Feature: High-level business requirement
+  Feature: User Management
+  
+  # Scenario: Specific example of feature
+  Scenario: User registration with valid data
+  
+  # Given: Initial state/context (Arrange)
+  Given I am on the registration page
+  Given a user with email "test@example.com" does not exist
+  
+  # When: Action/event (Act)
+  When I fill in "email" with "test@example.com"
+  When I click "Register"
+  
+  # Then: Expected outcome (Assert)
+  Then I should see "Registration successful"
+  Then a user with email "test@example.com" should exist
+  
+  # And, But: Additional steps
+  And I should receive a confirmation email
+  But I should not be logged in yet
+
+example_todo_feature: |
+  Feature: Create Todo via REST API
+    As a user
+    I want to create todos via REST API
+    So that I can manage my tasks programmatically
+
+    Background:
+      Given the REST API is running
+      And I have a valid API token for user 123456789
+
+    Scenario: Create a simple todo
+      When I POST to "/api/v1/todos" with:
+        """
+        {
+          "title": "Buy groceries",
+          "priority": "medium"
+        }
+        """
+      Then the response status should be 201
+      And the response should contain:
+        | field    | value          |
+        | title    | Buy groceries  |
+        | priority | medium         |
+        | status   | pending        |
+      And a todo should exist in database with title "Buy groceries"
+
+    Scenario: Create todo with invalid title
+      When I POST to "/api/v1/todos" with:
+        """
+        {
+          "title": ""
+        }
+        """
+      Then the response status should be 400
+      And the error message should contain "title is required"
+
+scenario_outline: |
+  Feature: Todo Priority Validation
+    
+    Scenario Outline: Validate different priority values
+      Given I am authenticated as user 123456789
+      When I create a todo with priority "<priority>"
+      Then the result should be "<result>"
+      And the error should be "<error>"
+      
+      Examples:
+        | priority | result  | error                    |
+        | low      | success |                          |
+        | medium   | success |                          |
+        | high     | success |                          |
+        | urgent   | failure | invalid priority value   |
+        | ""       | failure | priority is required     |
+
+data_tables: |
+  Scenario: User has multiple todos
+    Given the user has the following todos:
+      | title          | status    | priority |
+      | Buy groceries  | pending   | high     |
+      | Call mom       | pending   | medium   |
+      | Read book      | completed | low      |
+    When I request all pending todos
+    Then I should see 2 todos
+    And the todos should be:
+      | title         | priority |
+      | Buy groceries | high     |
+      | Call mom      | medium   |
+
+doc_strings: |
+  Scenario: Create todo with JSON
+    When I send a POST request with:
+      """
+      {
+        "title": "Complete project",
+        "description": "Finish all features",
+        "tags": ["work", "urgent"]
+      }
+      """
+    Then the response should be valid JSON
+
+tags: |
+  @smoke @critical
+  Feature: Authentication
+    
+    @fast
+    Scenario: Login with valid credentials
+      Given a user exists
+      When I login
+      Then I should be authenticated
+    
+    @slow @integration
+    Scenario: Password reset flow
+      Given a user exists
+      When I request password reset
+      Then I should receive an email
+
+  # Run specific tags
+  # godog -tags=@smoke
+  # godog -tags=@fast
+  # godog -tags="@smoke && @critical"
+
+best_practices:
+  - Write scenarios from user perspective
+  - Keep scenarios independent
+  - Use declarative style (what, not how)
+  - One scenario per behavior
+  - Use concrete examples
+  - Avoid technical jargon
+  - Make scenarios readable by non-developers
+  - Use Background for common setup
+  - Use Scenario Outline for data variations
+
+anti_patterns: |
+  # Bad: Too imperative (UI-focused)
+  Scenario: Create todo
+    Given I am on the home page
+    When I click the "New Todo" button
+    And I type "Buy milk" in the title field
+    And I select "High" from the priority dropdown
+    And I click the "Save" button
+    Then I should see "Todo created"
+  
+  # Good: Declarative (behavior-focused)
+  Scenario: Create high priority todo
+    When I create a todo "Buy milk" with high priority
+    Then the todo should be saved
+    And I should see a success confirmation
+
+resources:
+  specification: https://cucumber.io/docs/gherkin/reference/
+  best_practices: https://cucumber.io/docs/bdd/better-gherkin/

@@ -1,0 +1,579 @@
+name: postgresql/advanced
+description: Advanced PostgreSQL features including JSONB, triggers, CTEs, and full-text search
+category: database
+language: sql
+
+overview: |
+  PostgreSQL is a powerful, open-source relational database with advanced features
+  like JSONB for semi-structured data, full-text search, triggers for automation,
+  CTEs for complex queries, and window functions for analytics.
+
+key_features:
+  - JSONB for flexible schema
+  - Full-text search with tsvector and tsquery
+  - Triggers and stored procedures
+  - CTEs (Common Table Expressions)
+  - Window functions
+  - Array and range types
+  - Row-Level Security (RLS)
+  - LISTEN/NOTIFY for pub/sub
+
+jsonb_usage: |
+  -- Create table with JSONB column
+  CREATE TABLE todos (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      telegram_user_id BIGINT NOT NULL,
+      title TEXT NOT NULL,
+      metadata JSONB DEFAULT '{}'::JSONB,  -- Flexible metadata
+      tags TEXT[] DEFAULT ARRAY[]::TEXT[],
+      created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- Insert with JSONB data
+  INSERT INTO todos (telegram_user_id, title, metadata)
+  VALUES (
+      123456789,
+      'Buy groceries',
+      '{"priority": "high", "location": "Walmart", "recurring": true}'::JSONB
+  );
+
+  -- Query JSONB field
+  SELECT * FROM todos
+  WHERE metadata->>'priority' = 'high';
+
+  -- Query nested JSONB
+  SELECT * FROM todos
+  WHERE metadata->'location'->>'city' = 'New York';
+
+  -- Check if JSONB contains key
+  SELECT * FROM todos
+  WHERE metadata ? 'priority';
+
+  -- Check if JSONB contains value
+  SELECT * FROM todos
+  WHERE metadata @> '{"priority": "high"}'::JSONB;
+
+  -- Update JSONB field (merge)
+  UPDATE todos
+  SET metadata = metadata || '{"completed": true}'::JSONB
+  WHERE id = '...';
+
+  -- Remove JSONB key
+  UPDATE todos
+  SET metadata = metadata - 'location'
+  WHERE id = '...';
+
+  -- Index JSONB for performance
+  CREATE INDEX idx_todos_metadata_gin ON todos USING GIN (metadata);
+  CREATE INDEX idx_todos_priority ON todos ((metadata->>'priority'));
+
+full_text_search: |
+  -- Add tsvector column for full-text search
+  ALTER TABLE todos
+  ADD COLUMN search_vector tsvector;
+
+  -- Create GIN index for fast full-text search
+  CREATE INDEX idx_todos_search ON todos USING GIN (search_vector);
+
+  -- Update search_vector manually
+  UPDATE todos
+  SET search_vector = 
+      setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
+      setweight(to_tsvector('english', COALESCE(description, '')), 'B');
+
+  -- Create trigger to auto-update search_vector
+  CREATE OR REPLACE FUNCTION todos_search_trigger()
+  RETURNS TRIGGER AS $$
+  BEGIN
+      NEW.search_vector :=
+          setweight(to_tsvector('english', COALESCE(NEW.title, '')), 'A') ||
+          setweight(to_tsvector('english', COALESCE(NEW.description, '')), 'B');
+      RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  CREATE TRIGGER update_todos_search
+  BEFORE INSERT OR UPDATE OF title, description ON todos
+  FOR EACH ROW
+  EXECUTE FUNCTION todos_search_trigger();
+
+  -- Full-text search query
+  SELECT id, title,
+         ts_rank(search_vector, query) AS rank
+  FROM todos,
+       to_tsquery('english', 'buy & groceries') AS query
+  WHERE search_vector @@ query
+  ORDER BY rank DESC;
+
+  -- Search with phrase matching
+  SELECT * FROM todos
+  WHERE search_vector @@ phraseto_tsquery('english', 'buy groceries');
+
+  -- Search with prefix matching (autocomplete)
+  SELECT * FROM todos
+  WHERE search_vector @@ to_tsquery('english', 'groc:*');
+
+triggers_and_functions: |
+  -- Auto-update updated_at timestamp
+  CREATE OR REPLACE FUNCTION update_updated_at()
+  RETURNS TRIGGER AS $$
+  BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  CREATE TRIGGER update_todos_updated_at
+  BEFORE UPDATE ON todos
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at();
+
+  -- Auto-generate sequential code
+  CREATE TABLE code_sequences (
+      telegram_user_id BIGINT NOT NULL,
+      year_prefix TEXT NOT NULL,
+      last_number INT DEFAULT 0,
+      PRIMARY KEY (telegram_user_id, year_prefix)
+  );
+
+  CREATE OR REPLACE FUNCTION generate_todo_code()
+  RETURNS TRIGGER AS $$
+  DECLARE
+      year_prefix TEXT;
+      next_number INT;
+  BEGIN
+      -- Get current year prefix (e.g., "26" for 2026)
+      year_prefix := TO_CHAR(NOW(), 'YY');
+      
+      -- Get next number for this user and year
+      INSERT INTO code_sequences (telegram_user_id, year_prefix, last_number)
+      VALUES (NEW.telegram_user_id, year_prefix, 1)
+      ON CONFLICT (telegram_user_id, year_prefix)
+      DO UPDATE SET last_number = code_sequences.last_number + 1
+      RETURNING last_number INTO next_number;
+      
+      -- Set the code (format: YY-NNNN)
+      NEW.code := year_prefix || '-' || LPAD(next_number::TEXT, 4, '0');
+      
+      RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  CREATE TRIGGER generate_todo_code_trigger
+  BEFORE INSERT ON todos
+  FOR EACH ROW
+  WHEN (NEW.code IS NULL)
+  EXECUTE FUNCTION generate_todo_code();
+
+  -- Audit log trigger
+  CREATE TABLE audit_log (
+      id SERIAL PRIMARY KEY,
+      table_name TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      old_data JSONB,
+      new_data JSONB,
+      changed_by BIGINT,
+      changed_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  CREATE OR REPLACE FUNCTION audit_trigger()
+  RETURNS TRIGGER AS $$
+  BEGIN
+      IF TG_OP = 'INSERT' THEN
+          INSERT INTO audit_log (table_name, operation, new_data)
+          VALUES (TG_TABLE_NAME, TG_OP, row_to_json(NEW)::JSONB);
+      ELSIF TG_OP = 'UPDATE' THEN
+          INSERT INTO audit_log (table_name, operation, old_data, new_data)
+          VALUES (TG_TABLE_NAME, TG_OP, row_to_json(OLD)::JSONB, row_to_json(NEW)::JSONB);
+      ELSIF TG_OP = 'DELETE' THEN
+          INSERT INTO audit_log (table_name, operation, old_data)
+          VALUES (TG_TABLE_NAME, TG_OP, row_to_json(OLD)::JSONB);
+      END IF;
+      RETURN NULL;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  CREATE TRIGGER todos_audit
+  AFTER INSERT OR UPDATE OR DELETE ON todos
+  FOR EACH ROW
+  EXECUTE FUNCTION audit_trigger();
+
+ctes_and_window_functions: |
+  -- CTE (Common Table Expression) for recursive queries
+  WITH RECURSIVE todo_hierarchy AS (
+      -- Base case: top-level todos
+      SELECT id, title, parent_id, 1 AS level
+      FROM todos
+      WHERE parent_id IS NULL
+      
+      UNION ALL
+      
+      -- Recursive case: child todos
+      SELECT t.id, t.title, t.parent_id, th.level + 1
+      FROM todos t
+      INNER JOIN todo_hierarchy th ON t.parent_id = th.id
+  )
+  SELECT * FROM todo_hierarchy
+  ORDER BY level, title;
+
+  -- CTE for complex filtering
+  WITH high_priority_todos AS (
+      SELECT * FROM todos
+      WHERE metadata->>'priority' = 'high'
+  ),
+  overdue_todos AS (
+      SELECT * FROM todos
+      WHERE due_date < NOW() AND status != 'completed'
+  )
+  SELECT hpt.*
+  FROM high_priority_todos hpt
+  INNER JOIN overdue_todos ot ON hpt.id = ot.id;
+
+  -- Window functions for analytics
+  SELECT
+      id,
+      title,
+      created_at,
+      -- Running total of todos per user
+      COUNT(*) OVER (PARTITION BY telegram_user_id ORDER BY created_at) AS running_total,
+      -- Rank by creation date
+      ROW_NUMBER() OVER (PARTITION BY telegram_user_id ORDER BY created_at DESC) AS recency_rank,
+      -- Percentage of total todos
+      COUNT(*) OVER (PARTITION BY telegram_user_id) AS total_todos,
+      ROUND(100.0 * COUNT(*) OVER (PARTITION BY telegram_user_id ORDER BY created_at) / 
+            COUNT(*) OVER (PARTITION BY telegram_user_id), 2) AS completion_percentage
+  FROM todos;
+
+  -- LAG and LEAD for time between todos
+  SELECT
+      id,
+      title,
+      created_at,
+      LAG(created_at) OVER (PARTITION BY telegram_user_id ORDER BY created_at) AS previous_todo_time,
+      LEAD(created_at) OVER (PARTITION BY telegram_user_id ORDER BY created_at) AS next_todo_time,
+      created_at - LAG(created_at) OVER (PARTITION BY telegram_user_id ORDER BY created_at) AS time_since_last
+  FROM todos;
+
+array_operations: |
+  -- Array type for tags
+  CREATE TABLE todos (
+      id UUID PRIMARY KEY,
+      title TEXT NOT NULL,
+      tags TEXT[] DEFAULT ARRAY[]::TEXT[]
+  );
+
+  -- Insert with array
+  INSERT INTO todos (title, tags)
+  VALUES ('Buy groceries', ARRAY['shopping', 'urgent']);
+
+  -- Query array contains element
+  SELECT * FROM todos
+  WHERE 'urgent' = ANY(tags);
+
+  -- Query array contains all elements
+  SELECT * FROM todos
+  WHERE tags @> ARRAY['shopping', 'urgent'];
+
+  -- Query array overlaps
+  SELECT * FROM todos
+  WHERE tags && ARRAY['shopping', 'work'];
+
+  -- Append to array
+  UPDATE todos
+  SET tags = array_append(tags, 'important')
+  WHERE id = '...';
+
+  -- Remove from array
+  UPDATE todos
+  SET tags = array_remove(tags, 'urgent')
+  WHERE id = '...';
+
+  -- Array aggregation
+  SELECT
+      telegram_user_id,
+      array_agg(DISTINCT unnest) AS all_tags
+  FROM todos,
+       unnest(tags) AS unnest
+  GROUP BY telegram_user_id;
+
+  -- Index for array containment
+  CREATE INDEX idx_todos_tags ON todos USING GIN (tags);
+
+partitioning: |
+  -- Partition by range (date-based)
+  CREATE TABLE todos (
+      id UUID NOT NULL,
+      telegram_user_id BIGINT NOT NULL,
+      title TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  ) PARTITION BY RANGE (created_at);
+
+  -- Create partitions
+  CREATE TABLE todos_2026_01 PARTITION OF todos
+      FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
+
+  CREATE TABLE todos_2026_02 PARTITION OF todos
+      FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');
+
+  -- Partition by list (user-based)
+  CREATE TABLE todos (
+      id UUID NOT NULL,
+      telegram_user_id BIGINT NOT NULL,
+      title TEXT NOT NULL
+  ) PARTITION BY LIST (telegram_user_id);
+
+  CREATE TABLE todos_user_1 PARTITION OF todos
+      FOR VALUES IN (123456789);
+
+  -- Partition by hash (for load distribution)
+  CREATE TABLE todos (
+      id UUID NOT NULL,
+      telegram_user_id BIGINT NOT NULL,
+      title TEXT NOT NULL
+  ) PARTITION BY HASH (telegram_user_id);
+
+  CREATE TABLE todos_hash_0 PARTITION OF todos
+      FOR VALUES WITH (MODULUS 4, REMAINDER 0);
+
+  CREATE TABLE todos_hash_1 PARTITION OF todos
+      FOR VALUES WITH (MODULUS 4, REMAINDER 1);
+
+views_and_materialized_views: |
+  -- Regular view
+  CREATE VIEW pending_todos AS
+  SELECT id, telegram_user_id, title, due_date, priority
+  FROM todos
+  WHERE status = 'pending'
+  ORDER BY
+      CASE priority
+          WHEN 'high' THEN 1
+          WHEN 'medium' THEN 2
+          WHEN 'low' THEN 3
+      END,
+      due_date NULLS LAST;
+
+  -- Materialized view (cached, needs refresh)
+  CREATE MATERIALIZED VIEW user_todo_stats AS
+  SELECT
+      telegram_user_id,
+      COUNT(*) AS total_todos,
+      COUNT(*) FILTER (WHERE status = 'completed') AS completed_count,
+      COUNT(*) FILTER (WHERE status = 'pending') AS pending_count,
+      COUNT(*) FILTER (WHERE due_date < NOW() AND status != 'completed') AS overdue_count,
+      ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'completed') / COUNT(*), 2) AS completion_rate
+  FROM todos
+  GROUP BY telegram_user_id;
+
+  -- Create index on materialized view
+  CREATE UNIQUE INDEX ON user_todo_stats (telegram_user_id);
+
+  -- Refresh materialized view
+  REFRESH MATERIALIZED VIEW user_todo_stats;
+
+  -- Refresh concurrently (requires unique index)
+  REFRESH MATERIALIZED VIEW CONCURRENTLY user_todo_stats;
+
+constraints_and_checks: |
+  -- Check constraint
+  ALTER TABLE todos
+  ADD CONSTRAINT check_priority
+  CHECK (priority IN ('low', 'medium', 'high'));
+
+  ALTER TABLE todos
+  ADD CONSTRAINT check_status
+  CHECK (status IN ('pending', 'in_progress', 'completed'));
+
+  ALTER TABLE todos
+  ADD CONSTRAINT check_title_length
+  CHECK (LENGTH(title) BETWEEN 1 AND 500);
+
+  -- Exclusion constraint (prevent overlapping date ranges)
+  CREATE EXTENSION btree_gist;
+
+  ALTER TABLE bookings
+  ADD CONSTRAINT no_overlapping_bookings
+  EXCLUDE USING gist (
+      user_id WITH =,
+      daterange(start_date, end_date, '[]') WITH &&
+  );
+
+  -- Unique constraint with WHERE clause (partial index)
+  CREATE UNIQUE INDEX unique_active_code
+  ON todos (telegram_user_id, code)
+  WHERE status != 'deleted';
+
+performance_optimization: |
+  -- Analyze query performance
+  EXPLAIN ANALYZE
+  SELECT * FROM todos
+  WHERE telegram_user_id = 123
+    AND status = 'pending'
+  ORDER BY created_at DESC
+  LIMIT 10;
+
+  -- Create composite index
+  CREATE INDEX idx_todos_user_status_created
+  ON todos (telegram_user_id, status, created_at DESC);
+
+  -- Partial index (only index certain rows)
+  CREATE INDEX idx_todos_pending
+  ON todos (telegram_user_id, created_at)
+  WHERE status = 'pending';
+
+  -- Expression index
+  CREATE INDEX idx_todos_lower_title
+  ON todos (LOWER(title));
+
+  -- Covering index (include extra columns)
+  CREATE INDEX idx_todos_user_status_include
+  ON todos (telegram_user_id, status)
+  INCLUDE (title, priority, due_date);
+
+  -- Analyze table statistics
+  ANALYZE todos;
+
+  -- Vacuum to reclaim space
+  VACUUM ANALYZE todos;
+
+  -- Auto-vacuum configuration
+  ALTER TABLE todos
+  SET (autovacuum_vacuum_scale_factor = 0.1);
+
+transactions_and_locking: |
+  -- Transaction with savepoints
+  BEGIN;
+      INSERT INTO todos (title) VALUES ('Task 1');
+      SAVEPOINT sp1;
+      
+      INSERT INTO todos (title) VALUES ('Task 2');
+      -- Error here
+      ROLLBACK TO SAVEPOINT sp1;
+      
+      INSERT INTO todos (title) VALUES ('Task 3');
+  COMMIT;
+
+  -- Advisory locks (application-level locking)
+  SELECT pg_advisory_lock(123456789);
+  -- Do work
+  SELECT pg_advisory_unlock(123456789);
+
+  -- Row-level locking
+  SELECT * FROM todos
+  WHERE id = '...'
+  FOR UPDATE;  -- Exclusive lock
+
+  SELECT * FROM todos
+  WHERE id = '...'
+  FOR SHARE;   -- Shared lock
+
+  -- Skip locked rows
+  SELECT * FROM todos
+  WHERE status = 'pending'
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1;
+
+listen_notify: |
+  -- Publisher: notify on changes
+  CREATE OR REPLACE FUNCTION notify_todo_changes()
+  RETURNS TRIGGER AS $$
+  BEGIN
+      PERFORM pg_notify(
+          'todo_changes',
+          json_build_object(
+              'operation', TG_OP,
+              'id', NEW.id,
+              'user_id', NEW.telegram_user_id
+          )::TEXT
+      );
+      RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  CREATE TRIGGER todo_changes_trigger
+  AFTER INSERT OR UPDATE OR DELETE ON todos
+  FOR EACH ROW
+  EXECUTE FUNCTION notify_todo_changes();
+
+  -- Subscriber (in application code)
+  -- LISTEN todo_changes;
+  -- Wait for notifications...
+
+best_practices:
+  - Use JSONB for flexible schema, but don't overuse
+  - Create appropriate indexes (GIN for JSONB, full-text)
+  - Use triggers sparingly (they add overhead)
+  - Analyze queries with EXPLAIN ANALYZE
+  - Use CTEs for readability, but watch performance
+  - Partition large tables (>10M rows)
+  - Use materialized views for expensive aggregations
+  - Vacuum regularly to prevent bloat
+  - Use connection pooling (pgbouncer or pgx pool)
+
+common_patterns:
+  soft_deletes: |
+    ALTER TABLE todos
+    ADD COLUMN deleted_at TIMESTAMPTZ;
+    
+    CREATE INDEX idx_todos_not_deleted
+    ON todos (telegram_user_id)
+    WHERE deleted_at IS NULL;
+    
+    -- Soft delete
+    UPDATE todos
+    SET deleted_at = NOW()
+    WHERE id = '...';
+    
+    -- Query active records
+    SELECT * FROM todos
+    WHERE deleted_at IS NULL;
+  
+  optimistic_locking: |
+    ALTER TABLE todos
+    ADD COLUMN version INT DEFAULT 1;
+    
+    -- Update with version check
+    UPDATE todos
+    SET title = 'New title',
+        version = version + 1
+    WHERE id = '...'
+      AND version = 5;  -- Current version
+    
+    -- Check if update succeeded
+    GET DIAGNOSTICS rows_affected = ROW_COUNT;
+    IF rows_affected = 0 THEN
+        RAISE EXCEPTION 'Concurrent modification detected';
+    END IF;
+
+troubleshooting:
+  slow_queries: |
+    Problem: Queries are slow
+    Solutions:
+    - Run EXPLAIN ANALYZE to identify bottlenecks
+    - Check if indexes are being used
+    - Create appropriate indexes
+    - Consider partial indexes for filtered queries
+    - Use LIMIT to reduce result set
+    - Analyze table statistics: ANALYZE table_name
+  
+  lock_contention: |
+    Problem: Deadlocks or lock waits
+    Solutions:
+    - Keep transactions short
+    - Access tables in consistent order
+    - Use FOR UPDATE SKIP LOCKED for queues
+    - Check pg_stat_activity for blocking queries
+    - Use advisory locks for application-level coordination
+  
+  bloat: |
+    Problem: Table size growing despite deletions
+    Solutions:
+    - Run VACUUM regularly
+    - Configure auto-vacuum appropriately
+    - Use VACUUM FULL for severe bloat (locks table)
+    - Monitor with pg_stat_user_tables
+
+resources:
+  documentation: https://www.postgresql.org/docs/current/
+  performance_tips: https://wiki.postgresql.org/wiki/Performance_Optimization
+  jsonb_guide: https://www.postgresql.org/docs/current/datatype-json.html
+  full_text_search: https://www.postgresql.org/docs/current/textsearch.html

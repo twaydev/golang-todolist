@@ -1,0 +1,700 @@
+name: golang/telebot
+description: Telegram bot framework for Go (gopkg.in/telebot.v3)
+category: bot-framework
+language: go
+
+overview: |
+  Telebot (gopkg.in/telebot.v3) is a feature-rich Telegram bot framework for Go.
+  It provides a clean API for handling commands, messages, callbacks, and inline
+  keyboards. Perfect for building interactive Telegram bots with minimal boilerplate.
+
+features:
+  - Long polling and webhook support
+  - Command handlers with middleware
+  - Inline keyboards and callback queries
+  - File uploads and downloads
+  - Markdown and HTML formatting
+  - User-friendly API with context
+  - Built-in rate limiting
+  - Multi-bot support
+
+installation: |
+  go get gopkg.in/telebot.v3
+
+basic_bot_setup: |
+  package main
+
+  import (
+      "log"
+      "time"
+      
+      tele "gopkg.in/telebot.v3"
+  )
+
+  func main() {
+      // Create bot settings
+      pref := tele.Settings{
+          Token:  "YOUR_BOT_TOKEN_HERE",
+          Poller: &tele.LongPoller{Timeout: 10 * time.Second},
+      }
+
+      // Create bot instance
+      bot, err := tele.NewBot(pref)
+      if err != nil {
+          log.Fatal(err)
+      }
+
+      // Register handlers
+      bot.Handle("/start", handleStart)
+      bot.Handle("/help", handleHelp)
+      bot.Handle(tele.OnText, handleText)
+
+      // Start bot
+      log.Println("Bot started...")
+      bot.Start()
+  }
+
+  func handleStart(c tele.Context) error {
+      return c.Send("Welcome! I'm your todo assistant.")
+  }
+
+  func handleHelp(c tele.Context) error {
+      help := "Available commands:\n" +
+              "/start - Start bot\n" +
+              "/help - Show this help\n" +
+              "/list - List your todos"
+      return c.Send(help)
+  }
+
+  func handleText(c tele.Context) error {
+      // Echo back the message
+      return c.Send("You said: " + c.Text())
+  }
+
+command_handlers: |
+  package telegram
+
+  import (
+      "context"
+      "fmt"
+      "log"
+      
+      tele "gopkg.in/telebot.v3"
+      "todobot/internal/domain/service"
+  )
+
+  type Bot struct {
+      bot         *tele.Bot
+      todoService *service.TodoService
+      userService *service.UserService
+  }
+
+  func NewBot(todoSvc *service.TodoService, userSvc *service.UserService, token string) (*Bot, error) {
+      pref := tele.Settings{
+          Token:  token,
+          Poller: &tele.LongPoller{Timeout: 10 * time.Second},
+      }
+
+      b, err := tele.NewBot(pref)
+      if err != nil {
+          return nil, err
+      }
+
+      bot := &Bot{
+          bot:         b,
+          todoService: todoSvc,
+          userService: userSvc,
+      }
+
+      bot.registerHandlers()
+      return bot, nil
+  }
+
+  func (b *Bot) registerHandlers() {
+      // Command handlers
+      b.bot.Handle("/start", b.handleStart)
+      b.bot.Handle("/help", b.handleHelp)
+      b.bot.Handle("/list", b.handleList)
+      b.bot.Handle("/done", b.handleDone)
+      b.bot.Handle("/settings", b.handleSettings)
+
+      // Text messages (natural language)
+      b.bot.Handle(tele.OnText, b.handleText)
+
+      // Callback queries (inline keyboard buttons)
+      b.bot.Handle(tele.OnCallback, b.handleCallback)
+  }
+
+  func (b *Bot) Start() {
+      log.Println("Telegram bot started...")
+      b.bot.Start()
+  }
+
+  func (b *Bot) Stop() {
+      b.bot.Stop()
+  }
+
+  // Handle /start command
+  func (b *Bot) handleStart(c tele.Context) error {
+      userID := c.Sender().ID
+      
+      welcome := "👋 Welcome to Todo Bot!\n\n" +
+                 "I can help you manage your tasks using natural language.\n\n" +
+                 "Try:\n" +
+                 "• \"Buy groceries tomorrow\"\n" +
+                 "• \"Urgent: Call mom\"\n" +
+                 "• /list - See your todos\n" +
+                 "• /help - More commands"
+      
+      return c.Send(welcome, &tele.SendOptions{
+          ParseMode: tele.ModeMarkdown,
+      })
+  }
+
+  // Handle /list command
+  func (b *Bot) handleList(c tele.Context) error {
+      userID := c.Sender().ID
+      
+      // Get user's language preference
+      prefs, _ := b.userService.GetPreferences(context.Background(), userID)
+      
+      // Get todos
+      todos, err := b.todoService.ListTodos(
+          context.Background(),
+          userID,
+          port.ListFilters{Status: entity.StatusPending},
+      )
+      if err != nil {
+          return c.Send("Error fetching todos: " + err.Error())
+      }
+
+      if len(todos) == 0 {
+          return c.Send("You have no pending todos! 🎉")
+      }
+
+      // Format todo list
+      message := fmt.Sprintf("📝 *Your Todos* (%d)\n\n", len(todos))
+      for i, todo := range todos {
+          priority := ""
+          switch todo.Priority {
+          case entity.PriorityHigh:
+              priority = "🔴"
+          case entity.PriorityMedium:
+              priority = "🟡"
+          case entity.PriorityLow:
+              priority = "🟢"
+          }
+          
+          dueDate := ""
+          if todo.DueDate != nil {
+              dueDate = fmt.Sprintf(" (due %s)", todo.DueDate.Format("Jan 2"))
+          }
+          
+          message += fmt.Sprintf("%d. %s `%s` - %s%s\n",
+              i+1, priority, todo.Code, todo.Title, dueDate)
+      }
+      
+      message += "\n💡 Use `/done CODE` to mark complete"
+
+      return c.Send(message, &tele.SendOptions{
+          ParseMode: tele.ModeMarkdown,
+      })
+  }
+
+inline_keyboards: |
+  package telegram
+
+  import (
+      tele "gopkg.in/telebot.v3"
+  )
+
+  // Handle ambiguous queries with inline keyboard
+  func (b *Bot) handleAmbiguousTodos(c tele.Context, candidates []*entity.Todo) error {
+      message := "🤔 Which todo did you mean?\n\n"
+      
+      // Create inline keyboard
+      keyboard := &tele.ReplyMarkup{}
+      var rows []tele.Row
+      
+      for _, todo := range candidates {
+          // Create button with callback data
+          btn := keyboard.Data(
+              fmt.Sprintf("%s - %s", todo.Code, todo.Title),
+              "select_todo",
+              todo.ID,
+          )
+          rows = append(rows, keyboard.Row(btn))
+      }
+      
+      // Add cancel button
+      cancelBtn := keyboard.Data("❌ Cancel", "cancel")
+      rows = append(rows, keyboard.Row(cancelBtn))
+      
+      keyboard.Inline(rows...)
+      
+      return c.Send(message, keyboard)
+  }
+
+  // Handle settings with inline keyboard
+  func (b *Bot) handleSettings(c tele.Context) error {
+      userID := c.Sender().ID
+      prefs, _ := b.userService.GetPreferences(context.Background(), userID)
+      
+      message := fmt.Sprintf("⚙️ *Settings*\n\n" +
+          "Language: %s\n" +
+          "Timezone: %s\n",
+          prefs.Language, prefs.Timezone)
+      
+      // Create settings keyboard
+      keyboard := &tele.ReplyMarkup{}
+      
+      langBtn := keyboard.Data("🌐 Change Language", "settings", "language")
+      tzBtn := keyboard.Data("🕐 Change Timezone", "settings", "timezone")
+      closeBtn := keyboard.Data("✅ Close", "settings", "close")
+      
+      keyboard.Inline(
+          keyboard.Row(langBtn),
+          keyboard.Row(tzBtn),
+          keyboard.Row(closeBtn),
+      )
+      
+      return c.Send(message, keyboard, &tele.SendOptions{
+          ParseMode: tele.ModeMarkdown,
+      })
+  }
+
+callback_handlers: |
+  package telegram
+
+  import (
+      "strings"
+      tele "gopkg.in/telebot.v3"
+  )
+
+  // Handle callback queries (button clicks)
+  func (b *Bot) handleCallback(c tele.Context) error {
+      callback := c.Callback()
+      
+      // Parse callback data: "action|param1|param2"
+      parts := strings.Split(callback.Data, "|")
+      if len(parts) == 0 {
+          return c.Respond(&tele.CallbackResponse{Text: "Invalid action"})
+      }
+      
+      action := parts[0]
+      
+      switch action {
+      case "select_todo":
+          return b.handleSelectTodo(c, parts)
+      case "complete_todo":
+          return b.handleCompleteTodo(c, parts)
+      case "settings":
+          return b.handleSettingsCallback(c, parts)
+      case "cancel":
+          return b.handleCancel(c)
+      default:
+          return c.Respond(&tele.CallbackResponse{Text: "Unknown action"})
+      }
+  }
+
+  func (b *Bot) handleSelectTodo(c tele.Context, parts []string) error {
+      if len(parts) < 2 {
+          return c.Respond(&tele.CallbackResponse{Text: "Invalid todo ID"})
+      }
+      
+      todoID := parts[1]
+      userID := c.Sender().ID
+      
+      // Get todo details
+      todo, err := b.todoService.GetTodo(context.Background(), userID, todoID)
+      if err != nil {
+          return c.Respond(&tele.CallbackResponse{Text: "Todo not found"})
+      }
+      
+      // Show todo details with actions
+      message := fmt.Sprintf("📋 *Todo Details*\n\n" +
+          "Code: `%s`\n" +
+          "Title: %s\n" +
+          "Status: %s\n" +
+          "Priority: %s\n",
+          todo.Code, todo.Title, todo.Status, todo.Priority)
+      
+      keyboard := &tele.ReplyMarkup{}
+      completeBtn := keyboard.Data("✅ Mark Complete", "complete_todo", todoID)
+      deleteBtn := keyboard.Data("🗑 Delete", "delete_todo", todoID)
+      closeBtn := keyboard.Data("❌ Close", "cancel")
+      
+      keyboard.Inline(
+          keyboard.Row(completeBtn),
+          keyboard.Row(deleteBtn),
+          keyboard.Row(closeBtn),
+      )
+      
+      // Edit the message
+      c.Edit(message, keyboard, &tele.SendOptions{
+          ParseMode: tele.ModeMarkdown,
+      })
+      
+      return c.Respond(&tele.CallbackResponse{})
+  }
+
+natural_language_handling: |
+  package telegram
+
+  import (
+      "context"
+      tele "gopkg.in/telebot.v3"
+  )
+
+  // Handle text messages (natural language)
+  func (b *Bot) handleText(c tele.Context) error {
+      userID := c.Sender().ID
+      message := c.Text()
+      
+      // Get user preferences
+      prefs, _ := b.userService.GetPreferences(context.Background(), userID)
+      
+      // Process message through intent service
+      response, err := b.todoService.HandleMessage(
+          context.Background(),
+          userID,
+          message,
+      )
+      if err != nil {
+          log.Printf("Error handling message: %v", err)
+          return c.Send("Sorry, I couldn't process that. Try /help for available commands.")
+      }
+      
+      // Send response
+      return c.Send(response, &tele.SendOptions{
+          ParseMode: tele.ModeMarkdown,
+      })
+  }
+
+message_formatting: |
+  package telegram
+
+  import (
+      "fmt"
+      tele "gopkg.in/telebot.v3"
+  )
+
+  // Format todo confirmation message
+  func formatTodoCreated(todo *entity.Todo) string {
+      priority := ""
+      switch todo.Priority {
+      case entity.PriorityHigh:
+          priority = "High 🔴"
+      case entity.PriorityMedium:
+          priority = "Medium 🟡"
+      case entity.PriorityLow:
+          priority = "Low 🟢"
+      }
+      
+      message := fmt.Sprintf("✅ *Todo Created*\n\n" +
+          "Code: `%s`\n" +
+          "Title: %s\n" +
+          "Priority: %s\n",
+          todo.Code, todo.Title, priority)
+      
+      if todo.DueDate != nil {
+          message += fmt.Sprintf("Due: %s\n", todo.DueDate.Format("Mon Jan 2, 2006"))
+      }
+      
+      if len(todo.Tags) > 0 {
+          message += fmt.Sprintf("Tags: %s\n", strings.Join(todo.Tags, ", "))
+      }
+      
+      return message
+  }
+
+  // Send message with Markdown
+  func (b *Bot) sendMarkdown(c tele.Context, text string) error {
+      return c.Send(text, &tele.SendOptions{
+          ParseMode: tele.ModeMarkdown,
+      })
+  }
+
+  // Send message with HTML
+  func (b *Bot) sendHTML(c tele.Context, text string) error {
+      return c.Send(text, &tele.SendOptions{
+          ParseMode: tele.ModeHTML,
+      })
+  }
+
+middleware: |
+  package telegram
+
+  import (
+      "log"
+      "time"
+      tele "gopkg.in/telebot.v3"
+  )
+
+  // Logging middleware
+  func loggingMiddleware(next tele.HandlerFunc) tele.HandlerFunc {
+      return func(c tele.Context) error {
+          start := time.Now()
+          
+          log.Printf("[Telegram] User: %d, Message: %s",
+              c.Sender().ID, c.Text())
+          
+          err := next(c)
+          
+          log.Printf("[Telegram] Processed in %v", time.Since(start))
+          
+          return err
+      }
+  }
+
+  // Rate limiting middleware
+  func rateLimitMiddleware(next tele.HandlerFunc) tele.HandlerFunc {
+      // Simple in-memory rate limiter
+      lastMessage := make(map[int64]time.Time)
+      
+      return func(c tele.Context) error {
+          userID := c.Sender().ID
+          
+          if last, ok := lastMessage[userID]; ok {
+              if time.Since(last) < time.Second {
+                  return c.Send("⏱ Please wait a moment before sending another message.")
+              }
+          }
+          
+          lastMessage[userID] = time.Now()
+          return next(c)
+      }
+  }
+
+  // Apply middleware to bot
+  func (b *Bot) registerHandlers() {
+      // Apply global middleware
+      b.bot.Use(loggingMiddleware)
+      b.bot.Use(rateLimitMiddleware)
+      
+      // Register handlers
+      b.bot.Handle("/start", b.handleStart)
+      b.bot.Handle(tele.OnText, b.handleText)
+  }
+
+file_handling: |
+  package telegram
+
+  import (
+      "io"
+      "os"
+      tele "gopkg.in/telebot.v3"
+  )
+
+  // Handle photo uploads
+  func (b *Bot) handlePhoto(c tele.Context) error {
+      photo := c.Message().Photo
+      
+      // Download photo
+      file, err := b.bot.FileByID(photo.FileID)
+      if err != nil {
+          return err
+      }
+      
+      // Save to disk
+      reader, err := b.bot.File(file)
+      if err != nil {
+          return err
+      }
+      defer reader.Close()
+      
+      out, err := os.Create("photo.jpg")
+      if err != nil {
+          return err
+      }
+      defer out.Close()
+      
+      io.Copy(out, reader)
+      
+      return c.Send("Photo received!")
+  }
+
+  // Send photo
+  func (b *Bot) sendPhoto(c tele.Context, photoPath string) error {
+      photo := &tele.Photo{
+          File:    tele.FromDisk(photoPath),
+          Caption: "Your todo list as image",
+      }
+      
+      return c.Send(photo)
+  }
+
+  // Send document
+  func (b *Bot) sendDocument(c tele.Context, docPath string) error {
+      doc := &tele.Document{
+          File:     tele.FromDisk(docPath),
+          FileName: "todos.csv",
+          Caption:  "Your todos exported",
+      }
+      
+      return c.Send(doc)
+  }
+
+error_handling: |
+  package telegram
+
+  import (
+      "errors"
+      "log"
+      tele "gopkg.in/telebot.v3"
+      "todobot/internal/domain"
+  )
+
+  // Central error handler
+  func (b *Bot) handleError(c tele.Context, err error) error {
+      log.Printf("Error for user %d: %v", c.Sender().ID, err)
+      
+      var message string
+      
+      switch {
+      case errors.Is(err, domain.ErrNotFound):
+          message = "❌ Todo not found. Use /list to see your todos."
+      case errors.Is(err, domain.ErrInvalidInput):
+          message = "⚠️ Invalid input: " + err.Error()
+      case errors.Is(err, domain.ErrUnauthorized):
+          message = "🔒 You don't have permission to do that."
+      default:
+          message = "😕 Something went wrong. Please try again later."
+      }
+      
+      return c.Send(message)
+  }
+
+  // Wrap handler with error handling
+  func (b *Bot) wrapHandler(handler func(tele.Context) error) tele.HandlerFunc {
+      return func(c tele.Context) error {
+          if err := handler(c); err != nil {
+              return b.handleError(c, err)
+          }
+          return nil
+      }
+  }
+
+testing: |
+  package telegram
+
+  import (
+      "testing"
+      "github.com/stretchr/testify/assert"
+      "github.com/stretchr/testify/mock"
+      tele "gopkg.in/telebot.v3"
+  )
+
+  // Mock context for testing
+  type mockContext struct {
+      mock.Mock
+      message *tele.Message
+      sender  *tele.User
+  }
+
+  func (m *mockContext) Send(what interface{}, opts ...interface{}) error {
+      args := m.Called(what, opts)
+      return args.Error(0)
+  }
+
+  func (m *mockContext) Text() string {
+      return m.message.Text
+  }
+
+  func (m *mockContext) Sender() *tele.User {
+      return m.sender
+  }
+
+  // Test handler
+  func TestHandleStart(t *testing.T) {
+      // Setup
+      mockSvc := mocks.NewMockTodoService(t)
+      bot := &Bot{todoService: mockSvc}
+      
+      mockCtx := new(mockContext)
+      mockCtx.sender = &tele.User{ID: 123}
+      mockCtx.On("Send", mock.Anything, mock.Anything).Return(nil)
+      
+      // Execute
+      err := bot.handleStart(mockCtx)
+      
+      // Assert
+      assert.NoError(t, err)
+      mockCtx.AssertCalled(t, "Send", mock.MatchedBy(func(msg string) bool {
+          return strings.Contains(msg, "Welcome")
+      }), mock.Anything)
+  }
+
+best_practices:
+  - Use context (tele.Context) for accessing message data
+  - Always respond to callback queries (c.Respond)
+  - Use ParseMode for formatted messages
+  - Implement middleware for logging and rate limiting
+  - Handle errors gracefully with user-friendly messages
+  - Use inline keyboards for interactive flows
+  - Keep handler functions focused and small
+  - Test handlers with mock contexts
+
+common_patterns:
+  command_with_args: |
+    // /done 26-0001
+    func (b *Bot) handleDone(c tele.Context) error {
+        args := c.Args() // ["26-0001"]
+        if len(args) == 0 {
+            return c.Send("Usage: /done <todo_code>")
+        }
+        
+        code := args[0]
+        // Process completion...
+    }
+  
+  conversation_state: |
+    // Store conversation state
+    type conversationState struct {
+        userID int64
+        step   string
+        data   map[string]interface{}
+    }
+    
+    var conversations = make(map[int64]*conversationState)
+    
+    func (b *Bot) handleText(c tele.Context) error {
+        userID := c.Sender().ID
+        
+        if state, ok := conversations[userID]; ok {
+            // Continue conversation
+            return b.continueConversation(c, state)
+        }
+        
+        // Start new intent processing
+        return b.processIntent(c)
+    }
+
+troubleshooting:
+  bot_not_responding: |
+    Problem: Bot doesn't respond to messages
+    Solutions:
+    - Check bot token is correct
+    - Verify bot has privacy mode disabled (can read all messages)
+    - Check network connectivity
+    - Ensure bot.Start() is called
+  
+  callback_not_working: |
+    Problem: Button clicks not triggering callback
+    Solutions:
+    - Ensure callback data is unique
+    - Always call c.Respond() in callback handler
+    - Check callback data format (max 64 bytes)
+  
+  markdown_not_rendering: |
+    Problem: Markdown not displaying correctly
+    Solutions:
+    - Use ParseMode: tele.ModeMarkdown
+    - Escape special characters: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    - Or use HTML mode instead
+
+resources:
+  documentation: https://pkg.go.dev/gopkg.in/telebot.v3
+  github: https://github.com/tucnak/telebot
+  examples: https://github.com/tucnak/telebot/tree/v3/examples
+  telegram_bot_api: https://core.telegram.org/bots/api

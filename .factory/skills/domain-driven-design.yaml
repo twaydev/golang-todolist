@@ -1,0 +1,568 @@
+name: domain-driven-design
+description: Domain-Driven Design principles and patterns for building complex business applications
+category: architecture
+language: agnostic
+
+overview: |
+  Domain-Driven Design (DDD) is an approach to software development that centers
+  the design on the business domain and its logic. DDD provides patterns and
+  practices to tackle complexity in the heart of software - the domain logic.
+
+core_concepts:
+  - "Ubiquitous Language: Shared vocabulary between developers and domain experts"
+  - "Bounded Context: Explicit boundary within which a domain model applies"
+  - "Entity: Object with unique identity that persists over time"
+  - "Value Object: Immutable object defined by its attributes, no identity"
+  - "Aggregate: Cluster of entities and value objects with consistency boundary"
+  - "Repository: Abstraction for collection-like access to aggregates"
+  - "Domain Event: Something significant that happened in the domain"
+  - "Service: Stateless operation that doesn't belong to any entity"
+
+entities: |
+  package entity
+
+  import (
+      "time"
+      "errors"
+  )
+
+  // Entity has unique identity and lifecycle
+  type Todo struct {
+      // Identity
+      ID             string    // Unique identifier
+      Code           string    // Business identifier (26-0001)
+      
+      // Attributes
+      TelegramUserID int64
+      Title          string
+      Description    *string
+      DueDate        *time.Time
+      Priority       Priority
+      Status         Status
+      Tags           []string
+      
+      // Lifecycle timestamps
+      CreatedAt      time.Time
+      UpdatedAt      time.Time
+  }
+
+  // Entity contains business rules as methods
+  func (t *Todo) Validate() error {
+      if t.Title == "" {
+          return errors.New("title is required")
+      }
+      if len(t.Title) > 500 {
+          return errors.New("title must be at most 500 characters")
+      }
+      return nil
+  }
+
+  // State transitions
+  func (t *Todo) MarkComplete() error {
+      if t.Status == StatusCompleted {
+          return errors.New("todo already completed")
+      }
+      t.Status = StatusCompleted
+      t.UpdatedAt = time.Now()
+      return nil
+  }
+
+  func (t *Todo) MarkInProgress() error {
+      if t.Status == StatusCompleted {
+          return errors.New("cannot mark completed todo as in-progress")
+      }
+      t.Status = StatusInProgress
+      t.UpdatedAt = time.Now()
+      return nil
+  }
+
+  // Business logic queries
+  func (t *Todo) IsOverdue() bool {
+      if t.DueDate == nil || t.Status == StatusCompleted {
+          return false
+      }
+      return time.Now().After(*t.DueDate)
+  }
+
+  // Entities are compared by ID
+  func (t *Todo) Equals(other *Todo) bool {
+      return t.ID == other.ID
+  }
+
+value_objects: |
+  package entity
+
+  // Value Objects are immutable and compared by attributes
+  
+  // Priority value object
+  type Priority string
+
+  const (
+      PriorityLow    Priority = "low"
+      PriorityMedium Priority = "medium"
+      PriorityHigh   Priority = "high"
+  )
+
+  func (p Priority) IsValid() bool {
+      return p == PriorityLow || p == PriorityMedium || p == PriorityHigh
+  }
+
+  func (p Priority) String() string {
+      return string(p)
+  }
+
+  // More complex value object
+  type DateRange struct {
+      Start time.Time
+      End   time.Time
+  }
+
+  // Value objects have behavior
+  func (dr DateRange) Duration() time.Duration {
+      return dr.End.Sub(dr.Start)
+  }
+
+  func (dr DateRange) Contains(t time.Time) bool {
+      return !t.Before(dr.Start) && !t.After(dr.End)
+  }
+
+  func (dr DateRange) Overlaps(other DateRange) bool {
+      return dr.Start.Before(other.End) && dr.End.After(other.Start)
+  }
+
+  // Value objects are immutable - return new instance on modification
+  func (dr DateRange) Extend(duration time.Duration) DateRange {
+      return DateRange{
+          Start: dr.Start,
+          End:   dr.End.Add(duration),
+      }
+  }
+
+  // Value objects are compared by attributes
+  func (dr DateRange) Equals(other DateRange) bool {
+      return dr.Start.Equal(other.Start) && dr.End.Equal(other.End)
+  }
+
+aggregates: |
+  package entity
+
+  // Aggregate Root - entry point for all access to the aggregate
+  type User struct {
+      ID           int64
+      TelegramID   int64
+      Preferences  UserPreferences    // Part of aggregate
+      todos        []*Todo            // Private - accessed via methods
+  }
+
+  // Aggregate enforces invariants across related entities
+  func (u *User) AddTodo(todo *Todo) error {
+      // Business rule: max 100 active todos per user
+      activeCount := 0
+      for _, t := range u.todos {
+          if t.Status != StatusCompleted {
+              activeCount++
+          }
+      }
+      if activeCount >= 100 {
+          return errors.New("maximum active todos reached (100)")
+      }
+
+      // Add todo
+      u.todos = append(u.todos, todo)
+      return nil
+  }
+
+  // Access to aggregate internals only through root
+  func (u *User) GetTodos() []*Todo {
+      // Return copy to prevent external modification
+      result := make([]*Todo, len(u.todos))
+      copy(result, u.todos)
+      return result
+  }
+
+  // Aggregate maintains consistency
+  func (u *User) CompleteTodo(todoID string) error {
+      for _, todo := range u.todos {
+          if todo.ID == todoID {
+              return todo.MarkComplete()
+          }
+      }
+      return errors.New("todo not found")
+  }
+
+repositories: |
+  package port
+
+  import (
+      "context"
+      "todobot/internal/domain/entity"
+  )
+
+  // Repository provides collection-like interface for aggregates
+  type TodoRepository interface {
+      // Query methods return aggregates
+      GetByID(ctx context.Context, userID int64, id string) (*entity.Todo, error)
+      List(ctx context.Context, userID int64, filters ListFilters) ([]*entity.Todo, error)
+      
+      // Persistence methods work with aggregates
+      Save(ctx context.Context, todo *entity.Todo) error
+      Delete(ctx context.Context, userID int64, id string) error
+  }
+
+  // Repository hides persistence details from domain
+  type UserRepository interface {
+      GetByID(ctx context.Context, id int64) (*entity.User, error)
+      Save(ctx context.Context, user *entity.User) error
+  }
+
+  // Only aggregate roots have repositories
+  // Don't create TodoTagRepository or TodoDescriptionRepository
+
+domain_services: |
+  package service
+
+  import (
+      "context"
+      "todobot/internal/domain/entity"
+      "todobot/internal/domain/port/output"
+  )
+
+  // Domain Service - operation that doesn't belong to any entity
+  type TodoService struct {
+      todoRepo       output.TodoRepository
+      userRepo       output.UserRepository
+      intentAnalyzer output.IntentAnalyzer
+  }
+
+  // Domain service orchestrates domain logic
+  func (s *TodoService) CreateTodo(
+      ctx context.Context,
+      userID int64,
+      title string,
+      options *CreateOptions,
+  ) (*entity.Todo, error) {
+      // Get user (aggregate root)
+      user, err := s.userRepo.GetByID(ctx, userID)
+      if err != nil {
+          return nil, err
+      }
+
+      // Create entity
+      todo := &entity.Todo{
+          TelegramUserID: userID,
+          Title:          title,
+          Status:         entity.StatusPending,
+          Priority:       entity.PriorityMedium,
+      }
+
+      // Apply business rules
+      if err := todo.Validate(); err != nil {
+          return nil, err
+      }
+
+      // User aggregate enforces invariants
+      if err := user.AddTodo(todo); err != nil {
+          return nil, err
+      }
+
+      // Persist through repository
+      if err := s.todoRepo.Save(ctx, todo); err != nil {
+          return nil, err
+      }
+
+      return todo, nil
+  }
+
+domain_events: |
+  package entity
+
+  import "time"
+
+  // Domain Event - something significant that happened
+  type DomainEvent interface {
+      OccurredAt() time.Time
+      EventType() string
+  }
+
+  type TodoCreatedEvent struct {
+      TodoID    string
+      UserID    int64
+      Title     string
+      occurredAt time.Time
+  }
+
+  func (e TodoCreatedEvent) OccurredAt() time.Time { return e.occurredAt }
+  func (e TodoCreatedEvent) EventType() string     { return "TodoCreated" }
+
+  type TodoCompletedEvent struct {
+      TodoID     string
+      UserID     int64
+      occurredAt time.Time
+  }
+
+  func (e TodoCompletedEvent) OccurredAt() time.Time { return e.occurredAt }
+  func (e TodoCompletedEvent) EventType() string     { return "TodoCompleted" }
+
+  // Entities can record events
+  type Todo struct {
+      // ... fields
+      events []DomainEvent
+  }
+
+  func (t *Todo) MarkComplete() error {
+      if t.Status == StatusCompleted {
+          return errors.New("already completed")
+      }
+      
+      t.Status = StatusCompleted
+      t.UpdatedAt = time.Now()
+      
+      // Record event
+      t.recordEvent(TodoCompletedEvent{
+          TodoID:     t.ID,
+          UserID:     t.TelegramUserID,
+          occurredAt: time.Now(),
+      })
+      
+      return nil
+  }
+
+  func (t *Todo) recordEvent(event DomainEvent) {
+      t.events = append(t.events, event)
+  }
+
+  func (t *Todo) Events() []DomainEvent {
+      return t.events
+  }
+
+  func (t *Todo) ClearEvents() {
+      t.events = nil
+  }
+
+bounded_contexts: |
+  // Bounded Context: explicit boundary within which a model applies
+
+  // Context 1: Todo Management
+  // packages: internal/domain/todo/
+  package todo
+
+  type Todo struct {
+      ID     string
+      Title  string
+      Status Status
+      // Focus on task lifecycle
+  }
+
+  // Context 2: Analytics
+  // packages: internal/domain/analytics/
+  package analytics
+
+  type TodoSummary struct {
+      TodoID         string
+      CompletionTime time.Duration
+      // Focus on metrics
+  }
+
+  // Same concept (Todo), different models in different contexts
+  // Each context has its own ubiquitous language
+
+ubiquitous_language: |
+  // Use domain expert terminology in code
+
+  // Bad: Generic technical terms
+  type Record struct {
+      Field1 string
+      Field2 string
+      Value  int
+  }
+
+  func ProcessRecords(records []Record) {}
+
+  // Good: Domain-specific terms
+  type Todo struct {
+      Title       string
+      Description string
+      Priority    Priority
+  }
+
+  func CompleteTodos(todos []*Todo) {}
+
+  // Terminology from domain experts:
+  // - "Todo" not "Task" or "Item"
+  // - "Complete" not "Finish" or "Done"
+  // - "Priority" not "Importance" or "Level"
+  // - "Code" not "ID" or "Number"
+
+layered_architecture: |
+  // DDD typically uses layered architecture
+  
+  // Layer 1: Domain Layer (core business logic)
+  // - Entities, Value Objects, Aggregates
+  // - Domain Services
+  // - Domain Events
+  // - Port Interfaces
+  // - NO infrastructure dependencies
+  
+  // Layer 2: Application Layer (use cases)
+  // - Application Services (orchestration)
+  // - DTOs for cross-layer communication
+  // - Depends on Domain Layer only
+  
+  // Layer 3: Infrastructure Layer (technical details)
+  // - Repositories (implementations)
+  // - Database access
+  // - External API clients
+  // - Implements ports from Domain Layer
+  
+  // Layer 4: Presentation Layer (user interface)
+  // - HTTP handlers
+  // - Telegram bot handlers
+  // - DTOs for external communication
+  // - Depends on Application Layer
+
+specifications: |
+  package specification
+
+  // Specification pattern for complex business rules
+  type Specification interface {
+      IsSatisfiedBy(todo *entity.Todo) bool
+  }
+
+  // Overdue specification
+  type OverdueSpecification struct{}
+
+  func (s OverdueSpecification) IsSatisfiedBy(todo *entity.Todo) bool {
+      return todo.IsOverdue()
+  }
+
+  // High priority specification
+  type HighPrioritySpecification struct{}
+
+  func (s HighPrioritySpecification) IsSatisfiedBy(todo *entity.Todo) bool {
+      return todo.Priority == entity.PriorityHigh
+  }
+
+  // Composite specifications
+  type AndSpecification struct {
+      left, right Specification
+  }
+
+  func (s AndSpecification) IsSatisfiedBy(todo *entity.Todo) bool {
+      return s.left.IsSatisfiedBy(todo) && s.right.IsSatisfiedBy(todo)
+  }
+
+  // Usage
+  overdueAndHighPriority := AndSpecification{
+      left:  OverdueSpecification{},
+      right: HighPrioritySpecification{},
+  }
+
+  if overdueAndHighPriority.IsSatisfiedBy(todo) {
+      // Send urgent notification
+  }
+
+anti_corruption_layer: |
+  package adapter
+
+  // Anti-Corruption Layer protects domain from external systems
+
+  // External API has different model
+  type ExternalTodo struct {
+      TaskID      int
+      TaskTitle   string
+      IsCompleted bool
+      TaskPriority int
+  }
+
+  // Translator converts between external and domain models
+  type ExternalTodoTranslator struct{}
+
+  func (t *ExternalTodoTranslator) ToDomain(ext *ExternalTodo) *entity.Todo {
+      priority := entity.PriorityMedium
+      if ext.TaskPriority >= 8 {
+          priority = entity.PriorityHigh
+      } else if ext.TaskPriority <= 3 {
+          priority = entity.PriorityLow
+      }
+
+      status := entity.StatusPending
+      if ext.IsCompleted {
+          status = entity.StatusCompleted
+      }
+
+      return &entity.Todo{
+          ID:       fmt.Sprintf("ext-%d", ext.TaskID),
+          Title:    ext.TaskTitle,
+          Priority: priority,
+          Status:   status,
+      }
+  }
+
+  func (t *ExternalTodoTranslator) ToExternal(todo *entity.Todo) *ExternalTodo {
+      // Convert domain to external model
+  }
+
+best_practices:
+  - Focus on business domain, not technical architecture
+  - Use ubiquitous language everywhere (code, docs, meetings)
+  - Keep domain layer pure (no infrastructure dependencies)
+  - Entities contain business rules as methods
+  - Value objects are immutable
+  - Aggregates enforce invariants
+  - Repositories work with aggregates only
+  - Domain services for operations across entities
+  - Use domain events for side effects
+  - Protect domain with anti-corruption layers
+
+common_mistakes:
+  - Anemic domain model (entities with no behavior)
+  - Breaking aggregate boundaries
+  - Creating repositories for every entity
+  - Mixing infrastructure code in domain layer
+  - Not using ubiquitous language
+  - Too large aggregates (performance issues)
+  - Ignoring bounded contexts
+  - Not protecting domain from external changes
+
+ddd_vs_crud: |
+  // CRUD approach (anemic)
+  type Todo struct {
+      ID     string
+      Title  string
+      Status string
+  }
+
+  func UpdateTodoStatus(todoID string, status string) error {
+      todo := getTodo(todoID)
+      todo.Status = status  // Direct field access
+      return saveTodo(todo)
+  }
+
+  // DDD approach (rich domain model)
+  type Todo struct {
+      id     string
+      title  string
+      status Status
+  }
+
+  func (t *Todo) MarkComplete() error {
+      // Business rule enforcement
+      if t.status == StatusCompleted {
+          return errors.New("already completed")
+      }
+      
+      // State transition
+      t.status = StatusCompleted
+      t.updatedAt = time.Now()
+      
+      // Domain event
+      t.recordEvent(TodoCompletedEvent{...})
+      
+      return nil
+  }
+
+resources:
+  blue_book: "Domain-Driven Design by Eric Evans"
+  red_book: "Implementing Domain-Driven Design by Vaughn Vernon"
+  patterns: https://www.domainlanguage.com/ddd/patterns/
+  example: https://github.com/ThreeDotsLabs/wild-workouts-go-ddd-example

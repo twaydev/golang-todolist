@@ -1,0 +1,14 @@
+name: database/optimization
+description: Database query optimization techniques
+category: database
+language: sql
+
+overview: |
+  Query optimization improves database performance.
+  Covered in postgresql/advanced skill.
+
+note: |
+  ⚠️ Complete optimization guide in postgresql/advanced skill.
+
+see_also:
+  - postgresql/advanced (EXPLAIN ANALYZE, indexes, query optimization)

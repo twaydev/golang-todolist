@@ -1,0 +1,128 @@
+name: containerization/docker
+description: Docker basics for containerizing Go applications
+category: devops
+language: docker
+
+overview: |
+  Docker packages applications with dependencies into containers that run
+  consistently across environments. Essential for deploying Go applications.
+
+dockerfile_basics: |
+  # Basic Dockerfile
+  FROM golang:1.22-alpine
+  
+  WORKDIR /app
+  
+  COPY go.mod go.sum ./
+  RUN go mod download
+  
+  COPY . .
+  RUN go build -o bot cmd/bot/main.go
+  
+  CMD ["./bot"]
+
+golang_best_practices: |
+  # Optimized Dockerfile for Go
+  FROM golang:1.22-alpine AS builder
+  
+  WORKDIR /app
+  
+  # Install dependencies
+  RUN apk add --no-cache git ca-certificates tzdata
+  
+  # Copy go mod files
+  COPY go.mod go.sum ./
+  RUN go mod download
+  
+  # Copy source
+  COPY . .
+  
+  # Build binary (static, stripped)
+  RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+      go build -ldflags="-w -s" -o /bot cmd/bot/main.go
+  
+  # Runtime stage
+  FROM alpine:latest
+  
+  RUN apk --no-cache add ca-certificates tzdata
+  
+  # Create non-root user
+  RUN addgroup -g 1000 appuser && \
+      adduser -D -u 1000 -G appuser appuser
+  
+  WORKDIR /app
+  COPY --from=builder /bot /app/bot
+  
+  USER appuser
+  
+  EXPOSE 8080
+  CMD ["/app/bot"]
+
+common_commands: |
+  # Build image
+  docker build -t telegram-todo-bot:latest .
+  
+  # Run container
+  docker run -d \
+    --name todo-bot \
+    -p 8080:8080 \
+    --env-file .env \
+    telegram-todo-bot:latest
+  
+  # View logs
+  docker logs todo-bot
+  docker logs -f todo-bot  # Follow
+  
+  # Execute command in container
+  docker exec -it todo-bot sh
+  
+  # Stop and remove
+  docker stop todo-bot
+  docker rm todo-bot
+  
+  # Push to registry
+  docker tag telegram-todo-bot:latest ghcr.io/user/todo-bot:latest
+  docker push ghcr.io/user/todo-bot:latest
+
+docker_compose: |
+  # docker-compose.yml
+  version: '3.8'
+  
+  services:
+    bot:
+      build: .
+      ports:
+        - "8080:8080"
+      environment:
+        - DATABASE_URL=${DATABASE_URL}
+        - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      depends_on:
+        - postgres
+    
+    postgres:
+      image: postgres:15
+      environment:
+        POSTGRES_PASSWORD: postgres
+        POSTGRES_DB: todobot
+      volumes:
+        - postgres-data:/var/lib/postgresql/data
+      ports:
+        - "5432:5432"
+  
+  volumes:
+    postgres-data:
+
+best_practices:
+  - Use multi-stage builds for smaller images
+  - Run as non-root user
+  - Use .dockerignore to exclude unnecessary files
+  - Pin base image versions
+  - Use layer caching effectively
+  - Minimize layers by combining RUN commands
+  - Use COPY not ADD (unless extracting archives)
+  - Set health checks
+
+resources:
+  documentation: https://docs.docker.com
+  best_practices: https://docs.docker.com/develop/dev-best-practices/
+  golang_docker: https://docs.docker.com/language/golang/

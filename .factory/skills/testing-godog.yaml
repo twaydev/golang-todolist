@@ -1,0 +1,233 @@
+name: testing/godog
+description: BDD testing framework for Go using Gherkin syntax (Cucumber for Go)
+category: testing
+language: go
+
+overview: |
+  Godog is the official Cucumber BDD framework for Go. It enables writing
+  executable specifications in plain language (Gherkin) that are automatically
+  tested against your Go code.
+
+capabilities:
+  - Write feature files in Gherkin syntax (.feature files)
+  - Map Gherkin steps to Go test functions
+  - Run BDD scenarios as part of test suite
+  - Generate test reports
+  - Support for Background, Scenario Outline, Examples
+  - Integration with go test
+
+key_concepts:
+  - "Feature: High-level description of software feature"
+  - "Scenario: Specific example of feature usage"
+  - "Given/When/Then: Test structure (Arrange/Act/Assert)"
+  - "Step Definition: Go function that implements a step"
+  - "Scenario Context: Test state management"
+  - "Table-driven tests: Using Examples in Scenario Outline"
+
+installation: |
+  go get github.com/cucumber/godog/cmd/godog@latest
+
+example_feature_file: |
+  # features/todo_create.feature
+  Feature: Create Todo
+    As a user
+    I want to create todos
+    So that I can track my tasks
+
+    Background:
+      Given a user with ID 123456789
+      And the user's language is "en"
+
+    Scenario: Create a simple todo
+      When the user sends "Buy groceries"
+      Then a todo should be created with title "Buy groceries"
+      And the todo should have status "pending"
+      And the user should receive a confirmation message
+
+    Scenario Outline: Create todos with different priorities
+      When the user sends "<message>"
+      Then a todo should be created with priority "<priority>"
+      
+      Examples:
+        | message                  | priority |
+        | Urgent: Call mom         | high     |
+        | Buy milk                 | medium   |
+        | Low priority: Read book  | low      |
+
+example_step_definitions: |
+  // test/bdd/todo_steps_test.go
+  package bdd
+
+  import (
+      "context"
+      "fmt"
+      "github.com/cucumber/godog"
+      "todobot/internal/domain/entity"
+      "todobot/internal/domain/service"
+  )
+
+  type todoContext struct {
+      userID       int64
+      todoService  *service.TodoService
+      lastResponse string
+      lastError    error
+      createdTodos []*entity.Todo
+  }
+
+  func (tc *todoContext) aUserWithID(userID int64) error {
+      tc.userID = userID
+      // Initialize services with in-memory adapters
+      tc.todoService = service.NewTodoService(/* ... */)
+      return nil
+  }
+
+  func (tc *todoContext) theUsersLanguageIs(lang string) error {
+      // Set user language
+      return tc.userService.SetLanguage(context.Background(), tc.userID, entity.Language(lang))
+  }
+
+  func (tc *todoContext) theUserSends(message string) error {
+      // Handle message
+      tc.lastResponse, tc.lastError = tc.todoService.HandleMessage(
+          context.Background(),
+          tc.userID,
+          message,
+      )
+      return tc.lastError
+  }
+
+  func (tc *todoContext) aTodoShouldBeCreatedWithTitle(expectedTitle string) error {
+      todos, _ := tc.todoRepo.List(context.Background(), tc.userID, port.ListFilters{})
+      for _, todo := range todos {
+          if todo.Title == expectedTitle {
+              return nil
+          }
+      }
+      return fmt.Errorf("todo with title %q not found", expectedTitle)
+  }
+
+  // Register step definitions
+  func InitializeScenario(ctx *godog.ScenarioContext) {
+      tc := &todoContext{}
+      
+      ctx.Step(`^a user with ID (\d+)$`, tc.aUserWithID)
+      ctx.Step(`^the user's language is "([^"]*)"$`, tc.theUsersLanguageIs)
+      ctx.Step(`^the user sends "([^"]*)"$`, tc.theUserSends)
+      ctx.Step(`^a todo should be created with title "([^"]*)"$`, tc.aTodoShouldBeCreatedWithTitle)
+  }
+
+example_test_runner: |
+  // test/bdd/main_test.go
+  package bdd
+
+  import (
+      "os"
+      "testing"
+      "github.com/cucumber/godog"
+  )
+
+  func TestFeatures(t *testing.T) {
+      suite := godog.TestSuite{
+          ScenarioInitializer: InitializeScenario,
+          Options: &godog.Options{
+              Format:   "pretty",           // pretty, progress, junit, cucumber
+              Paths:    []string{"../../features"},
+              TestingT: t,
+              Randomize: -1,                // Randomize scenario execution order
+          },
+      }
+
+      if suite.Run() != 0 {
+          t.Fatal("non-zero status returned, failed to run feature tests")
+      }
+  }
+
+  // Run specific feature
+  func TestTodoCreateFeature(t *testing.T) {
+      suite := godog.TestSuite{
+          ScenarioInitializer: InitializeScenario,
+          Options: &godog.Options{
+              Format: "pretty",
+              Paths:  []string{"../../features/todo_create.feature"},
+              TestingT: t,
+          },
+      }
+
+      if suite.Run() != 0 {
+          t.Fatal("todo_create feature failed")
+      }
+  }
+
+running_tests: |
+  # Run all BDD tests
+  go test ./test/bdd/... -v
+
+  # Run specific feature
+  go test ./test/bdd/... -v -godog.tags=@todo
+
+  # Generate reports
+  go test ./test/bdd/... -v -godog.format=cucumber:report.json
+
+  # Run with specific formatter
+  go test ./test/bdd/... -v -godog.format=progress
+
+best_practices:
+  - Keep scenarios focused and independent
+  - Use Background for common setup
+  - Use Scenario Outline for data-driven tests
+  - Keep step definitions reusable
+  - Use descriptive step names
+  - Maintain test context between steps
+  - Use in-memory adapters for speed
+  - Clean up state after scenarios
+
+common_patterns:
+  test_context: |
+    // Store state between steps
+    type testContext struct {
+        services  map[string]interface{}
+        responses map[string]interface{}
+        errors    []error
+    }
+  
+  table_assertions: |
+    Then the response should contain:
+      | field    | value        |
+      | status   | success      |
+      | code     | 26-0001      |
+    
+    // Step definition
+    func (tc *testContext) theResponseShouldContain(table *godog.Table) error {
+        for i := 1; i < len(table.Rows); i++ {
+            field := table.Rows[i].Cells[0].Value
+            expected := table.Rows[i].Cells[1].Value
+            actual := tc.response[field]
+            if actual != expected {
+                return fmt.Errorf("%s: expected %q, got %q", field, expected, actual)
+            }
+        }
+        return nil
+    }
+
+  error_handling: |
+    // Always return descriptive errors
+    if err := tc.someOperation(); err != nil {
+        return fmt.Errorf("operation failed: %w", err)
+    }
+
+troubleshooting:
+  - "Step not found: Check step regex patterns match exactly"
+  - "Test isolation: Reset test context between scenarios"
+  - "Flaky tests: Avoid time-dependent assertions"
+  - "Performance: Use in-memory adapters, not real DB"
+
+integration_with:
+  - go test (native integration)
+  - CI/CD pipelines (GitHub Actions, GitLab CI)
+  - Coverage tools (go test -cover)
+  - Test reporting (JUnit XML, Cucumber JSON)
+
+resources:
+  documentation: https://github.com/cucumber/godog
+  examples: https://github.com/cucumber/godog/tree/main/examples
+  gherkin_reference: https://cucumber.io/docs/gherkin/reference/

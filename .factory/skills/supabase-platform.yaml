@@ -1,0 +1,61 @@
+name: supabase/platform
+description: Supabase platform features and PostgreSQL hosting
+category: database
+language: sql
+
+overview: |
+  Supabase is an open-source Firebase alternative built on PostgreSQL.
+  It provides authentication, real-time subscriptions, storage, and
+  auto-generated APIs.
+
+key_features:
+  - PostgreSQL database with pgAdmin
+  - Auto-generated REST API
+  - Auto-generated GraphQL API
+  - Real-time subscriptions
+  - Authentication (email, OAuth, magic links)
+  - Storage for files
+  - Edge Functions (Deno)
+  - Row-Level Security (RLS)
+
+database_dashboard: |
+  # Supabase Dashboard
+  - Table Editor: Visual interface for data
+  - SQL Editor: Run custom queries
+  - Database Webhooks: Trigger HTTP requests
+  - Backups: Automatic daily backups
+  - Extensions: Enable PostgreSQL extensions
+
+connection_strings: |
+  # Direct connection (pooler)
+  postgresql://postgres:[PASSWORD]@db.[PROJECT].supabase.co:5432/postgres
+  
+  # Connection pooling (recommended)
+  postgresql://postgres:[PASSWORD]@db.[PROJECT].supabase.co:6543/postgres?pgbouncer=true
+
+api_usage: |
+  # Auto-generated REST API
+  GET    https://[PROJECT].supabase.co/rest/v1/todos
+  POST   https://[PROJECT].supabase.co/rest/v1/todos
+  
+  # Headers
+  apikey: YOUR_ANON_KEY
+  Authorization: Bearer YOUR_JWT
+
+real_time: |
+  # Subscribe to changes
+  const subscription = supabase
+    .from('todos')
+    .on('INSERT', payload => console.log('New todo:', payload))
+    .subscribe()
+
+best_practices:
+  - Enable RLS on all tables
+  - Use connection pooling for serverless
+  - Set up database backups
+  - Monitor database metrics
+  - Use API keys appropriately (anon vs service)
+
+resources:
+  documentation: https://supabase.com/docs
+  dashboard: https://app.supabase.com

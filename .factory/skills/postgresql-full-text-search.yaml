@@ -1,0 +1,14 @@
+name: postgresql/full-text-search
+description: PostgreSQL full-text search capabilities
+category: database
+language: sql
+
+overview: |
+  Full-text search in PostgreSQL uses tsvector and tsquery.
+  Complete implementation in postgresql/advanced.
+
+note: |
+  ⚠️ Full implementation in postgresql/advanced skill with triggers and indexes.
+
+see_also:
+  - postgresql/advanced (complete full-text search guide)

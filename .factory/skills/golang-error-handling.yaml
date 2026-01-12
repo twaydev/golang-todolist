@@ -1,0 +1,555 @@
+name: golang/error-handling
+description: Error handling patterns and best practices in Go
+category: golang
+language: go
+
+overview: |
+  Error handling in Go is explicit and value-based. Errors are returned as
+  values, not thrown as exceptions. This makes error handling visible and
+  forces developers to handle errors explicitly, leading to more robust code.
+
+basic_error_handling: |
+  package main
+
+  import (
+      "errors"
+      "fmt"
+  )
+
+  // Basic error checking
+  func divide(a, b float64) (float64, error) {
+      if b == 0 {
+          return 0, errors.New("division by zero")
+      }
+      return a / b, nil
+  }
+
+  func main() {
+      result, err := divide(10, 0)
+      if err != nil {
+          fmt.Println("Error:", err)
+          return
+      }
+      fmt.Println("Result:", result)
+  }
+
+  // Always check errors
+  file, err := os.Open("file.txt")
+  if err != nil {
+      return fmt.Errorf("failed to open file: %w", err)
+  }
+  defer file.Close()
+
+error_interface: |
+  // Error interface (built-in)
+  type error interface {
+      Error() string
+  }
+
+  // Custom error type
+  type ValidationError struct {
+      Field   string
+      Message string
+  }
+
+  func (e *ValidationError) Error() string {
+      return fmt.Sprintf("validation error on field '%s': %s", e.Field, e.Message)
+  }
+
+  // Usage
+  func validateTodo(todo *Todo) error {
+      if todo.Title == "" {
+          return &ValidationError{
+              Field:   "title",
+              Message: "title is required",
+          }
+      }
+      return nil
+  }
+
+  // Checking error type
+  err := validateTodo(todo)
+  if err != nil {
+      var validationErr *ValidationError
+      if errors.As(err, &validationErr) {
+          fmt.Printf("Field: %s, Message: %s\n", 
+              validationErr.Field, validationErr.Message)
+      }
+  }
+
+sentinel_errors: |
+  package domain
+
+  import "errors"
+
+  // Sentinel errors (package-level error variables)
+  var (
+      ErrNotFound        = errors.New("not found")
+      ErrInvalidInput    = errors.New("invalid input")
+      ErrUnauthorized    = errors.New("unauthorized")
+      ErrForbidden       = errors.New("forbidden")
+      ErrConflict        = errors.New("conflict")
+      ErrTitleRequired   = errors.New("title is required")
+      ErrTitleTooLong    = errors.New("title must be at most 500 characters")
+  )
+
+  // Using sentinel errors
+  func (s *TodoService) GetTodo(ctx context.Context, userID int64, id string) (*Todo, error) {
+      todo, err := s.repo.GetByID(ctx, userID, id)
+      if err != nil {
+          if errors.Is(err, pgx.ErrNoRows) {
+              return nil, ErrNotFound
+          }
+          return nil, fmt.Errorf("failed to get todo: %w", err)
+      }
+      return todo, nil
+  }
+
+  // Checking sentinel errors
+  todo, err := service.GetTodo(ctx, 123, "todo-1")
+  if err != nil {
+      if errors.Is(err, domain.ErrNotFound) {
+          return echo.NewHTTPError(http.StatusNotFound, "Todo not found")
+      }
+      return echo.NewHTTPError(http.StatusInternalServerError, "Internal error")
+  }
+
+error_wrapping: |
+  package service
+
+  import (
+      "fmt"
+  )
+
+  // Error wrapping with %w (Go 1.13+)
+  func (s *TodoService) CreateTodo(ctx context.Context, userID int64, title string) (*Todo, error) {
+      todo := &Todo{
+          TelegramUserID: userID,
+          Title:          title,
+      }
+
+      // Validate
+      if err := todo.Validate(); err != nil {
+          // Wrap with context
+          return nil, fmt.Errorf("validation failed: %w", err)
+      }
+
+      // Save to database
+      if err := s.repo.Create(ctx, todo); err != nil {
+          // Wrap with context
+          return nil, fmt.Errorf("failed to create todo in database: %w", err)
+      }
+
+      return todo, nil
+  }
+
+  // Unwrapping errors
+  err := service.CreateTodo(ctx, 123, "")
+  if err != nil {
+      // errors.Unwrap returns the wrapped error
+      innerErr := errors.Unwrap(err)
+      
+      // errors.Is checks the error chain
+      if errors.Is(err, domain.ErrTitleRequired) {
+          // Handle validation error
+      }
+  }
+
+custom_error_types: |
+  package domain
+
+  // Rich error type with context
+  type TodoError struct {
+      Op      string  // Operation that failed
+      TodoID  string  // Todo ID if applicable
+      UserID  int64   // User ID if applicable
+      Err     error   // Underlying error
+  }
+
+  func (e *TodoError) Error() string {
+      if e.TodoID != "" {
+          return fmt.Sprintf("todo operation '%s' failed for todo %s (user %d): %v",
+              e.Op, e.TodoID, e.UserID, e.Err)
+      }
+      return fmt.Sprintf("todo operation '%s' failed for user %d: %v",
+          e.Op, e.UserID, e.Err)
+  }
+
+  func (e *TodoError) Unwrap() error {
+      return e.Err
+  }
+
+  // Usage
+  func (s *TodoService) DeleteTodo(ctx context.Context, userID int64, todoID string) error {
+      if err := s.repo.Delete(ctx, userID, todoID); err != nil {
+          return &TodoError{
+              Op:     "delete",
+              TodoID: todoID,
+              UserID: userID,
+              Err:    err,
+          }
+      }
+      return nil
+  }
+
+error_with_stack_trace: |
+  // Using github.com/pkg/errors for stack traces
+  import "github.com/pkg/errors"
+
+  func (s *TodoService) ProcessTodo(ctx context.Context, id string) error {
+      todo, err := s.repo.GetByID(ctx, id)
+      if err != nil {
+          // Wrap with stack trace
+          return errors.Wrap(err, "failed to get todo")
+      }
+
+      if err := todo.Process(); err != nil {
+          return errors.Wrap(err, "failed to process todo")
+      }
+
+      return nil
+  }
+
+  // Print stack trace
+  err := service.ProcessTodo(ctx, "123")
+  if err != nil {
+      fmt.Printf("%+v\n", err)  // Prints stack trace
+  }
+
+error_groups: |
+  package service
+
+  import (
+      "context"
+      "golang.org/x/sync/errgroup"
+  )
+
+  // Process multiple todos concurrently with error handling
+  func (s *TodoService) ProcessTodos(ctx context.Context, todoIDs []string) error {
+      g, ctx := errgroup.WithContext(ctx)
+
+      for _, id := range todoIDs {
+          id := id  // Capture loop variable
+          g.Go(func() error {
+              return s.ProcessTodo(ctx, id)
+          })
+      }
+
+      // Wait for all goroutines, return first error
+      if err := g.Wait(); err != nil {
+          return fmt.Errorf("failed to process todos: %w", err)
+      }
+
+      return nil
+  }
+
+  // With limit on concurrent goroutines
+  func (s *TodoService) ProcessTodosWithLimit(ctx context.Context, todoIDs []string) error {
+      g, ctx := errgroup.WithContext(ctx)
+      g.SetLimit(10)  // Max 10 concurrent operations
+
+      for _, id := range todoIDs {
+          id := id
+          g.Go(func() error {
+              return s.ProcessTodo(ctx, id)
+          })
+      }
+
+      return g.Wait()
+  }
+
+error_handling_patterns: |
+  // Pattern 1: Early return
+  func (s *TodoService) CreateTodo(ctx context.Context, userID int64, title string) (*Todo, error) {
+      // Validate input
+      if title == "" {
+          return nil, ErrTitleRequired
+      }
+
+      // Check permissions
+      if !s.hasPermission(userID) {
+          return nil, ErrUnauthorized
+      }
+
+      // Create todo
+      todo := &Todo{Title: title}
+      if err := s.repo.Create(ctx, todo); err != nil {
+          return nil, fmt.Errorf("create failed: %w", err)
+      }
+
+      return todo, nil
+  }
+
+  // Pattern 2: Error aggregation
+  type MultiError struct {
+      Errors []error
+  }
+
+  func (m *MultiError) Error() string {
+      if len(m.Errors) == 0 {
+          return "no errors"
+      }
+      if len(m.Errors) == 1 {
+          return m.Errors[0].Error()
+      }
+      return fmt.Sprintf("%d errors: %v", len(m.Errors), m.Errors[0])
+  }
+
+  func (m *MultiError) Add(err error) {
+      if err != nil {
+          m.Errors = append(m.Errors, err)
+      }
+  }
+
+  func validateTodo(todo *Todo) error {
+      var errs MultiError
+
+      if todo.Title == "" {
+          errs.Add(errors.New("title is required"))
+      }
+      if len(todo.Title) > 500 {
+          errs.Add(errors.New("title too long"))
+      }
+      if todo.Priority == "" {
+          errs.Add(errors.New("priority is required"))
+      }
+
+      if len(errs.Errors) > 0 {
+          return &errs
+      }
+      return nil
+  }
+
+  // Pattern 3: Panic for truly exceptional cases
+  func mustLoadConfig() *Config {
+      config, err := loadConfig()
+      if err != nil {
+          panic(fmt.Sprintf("fatal: failed to load config: %v", err))
+      }
+      return config
+  }
+
+defer_and_errors: |
+  // Handling errors in defer
+  func processFile(filename string) (err error) {
+      file, err := os.Open(filename)
+      if err != nil {
+          return fmt.Errorf("open failed: %w", err)
+      }
+
+      // Defer with error handling
+      defer func() {
+          if closeErr := file.Close(); closeErr != nil {
+              // If there's already an error, add context
+              if err != nil {
+                  err = fmt.Errorf("%w; also failed to close: %v", err, closeErr)
+              } else {
+                  err = fmt.Errorf("close failed: %w", closeErr)
+              }
+          }
+      }()
+
+      // Process file
+      if err := process(file); err != nil {
+          return fmt.Errorf("process failed: %w", err)
+      }
+
+      return nil
+  }
+
+  // Defer with recover
+  func safeProcess() (err error) {
+      defer func() {
+          if r := recover(); r != nil {
+              err = fmt.Errorf("panic recovered: %v", r)
+          }
+      }()
+
+      // Risky operation that might panic
+      riskyOperation()
+
+      return nil
+  }
+
+error_boundaries: |
+  package adapter
+
+  import (
+      "todobot/internal/domain"
+  )
+
+  // Map domain errors to HTTP status codes (error boundary)
+  func mapDomainError(err error) *echo.HTTPError {
+      switch {
+      case errors.Is(err, domain.ErrNotFound):
+          return echo.NewHTTPError(http.StatusNotFound, "Resource not found")
+      case errors.Is(err, domain.ErrInvalidInput):
+          return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+      case errors.Is(err, domain.ErrUnauthorized):
+          return echo.NewHTTPError(http.StatusUnauthorized, "Unauthorized")
+      case errors.Is(err, domain.ErrForbidden):
+          return echo.NewHTTPError(http.StatusForbidden, "Forbidden")
+      case errors.Is(err, domain.ErrConflict):
+          return echo.NewHTTPError(http.StatusConflict, err.Error())
+      default:
+          // Don't expose internal errors to clients
+          log.Printf("Internal error: %v", err)
+          return echo.NewHTTPError(http.StatusInternalServerError, "Internal server error")
+      }
+  }
+
+  // Handler with error boundary
+  func (h *TodoHandler) CreateTodo(c echo.Context) error {
+      var req CreateTodoRequest
+      if err := c.Bind(&req); err != nil {
+          return echo.NewHTTPError(http.StatusBadRequest, "Invalid request")
+      }
+
+      todo, err := h.todoService.CreateTodo(
+          c.Request().Context(),
+          getUserID(c),
+          req.Title,
+      )
+      if err != nil {
+          return mapDomainError(err)  // Error boundary
+      }
+
+      return c.JSON(http.StatusCreated, toTodoResponse(todo))
+  }
+
+logging_errors: |
+  package service
+
+  import (
+      "log"
+  )
+
+  // Log errors with context
+  func (s *TodoService) CreateTodo(ctx context.Context, userID int64, title string) (*Todo, error) {
+      todo := &Todo{
+          TelegramUserID: userID,
+          Title:          title,
+      }
+
+      if err := s.repo.Create(ctx, todo); err != nil {
+          // Log with structured context
+          log.Printf("ERROR: failed to create todo: user_id=%d, title=%q, error=%v",
+              userID, title, err)
+          
+          // Return user-friendly error
+          return nil, fmt.Errorf("failed to create todo: %w", err)
+      }
+
+      // Log success
+      log.Printf("INFO: todo created: user_id=%d, todo_id=%s, code=%s",
+          userID, todo.ID, todo.Code)
+
+      return todo, nil
+  }
+
+  // With structured logging (using slog or zerolog)
+  import "log/slog"
+
+  func (s *TodoService) CreateTodo(ctx context.Context, userID int64, title string) (*Todo, error) {
+      if err := s.repo.Create(ctx, todo); err != nil {
+          slog.Error("failed to create todo",
+              "user_id", userID,
+              "title", title,
+              "error", err,
+          )
+          return nil, fmt.Errorf("failed to create todo: %w", err)
+      }
+      return todo, nil
+  }
+
+best_practices:
+  - Always check errors immediately after function calls
+  - Use sentinel errors for expected errors
+  - Wrap errors with context using %w
+  - Return errors, don't panic (except in init or truly fatal cases)
+  - Don't ignore errors (_ = funcThatReturnsError() is bad)
+  - Use errors.Is() and errors.As() for error checking
+  - Create custom error types for rich error context
+  - Log errors at boundaries (HTTP handlers, not domain)
+  - Don't expose internal errors to clients
+  - Use defer for cleanup, handle errors from Close()
+
+common_mistakes:
+  - Ignoring errors (_, _ = someFunc())
+  - Using panic for normal error conditions
+  - Not wrapping errors with context
+  - Exposing internal errors to users
+  - Comparing errors with == instead of errors.Is()
+  - Not handling errors in defer
+  - Creating too many custom error types
+  - Logging errors multiple times in the call stack
+
+error_testing: |
+  package service
+
+  import (
+      "testing"
+      "github.com/stretchr/testify/assert"
+      "github.com/stretchr/testify/require"
+  )
+
+  func TestTodoService_CreateTodo_ValidationError(t *testing.T) {
+      service := NewTodoService(nil, nil, nil, nil)
+
+      // Test error is returned
+      _, err := service.CreateTodo(context.Background(), 123, "")
+      
+      require.Error(t, err)
+      assert.True(t, errors.Is(err, domain.ErrTitleRequired))
+  }
+
+  func TestTodoService_CreateTodo_DatabaseError(t *testing.T) {
+      mockRepo := new(MockTodoRepository)
+      mockRepo.On("Create", mock.Anything, mock.Anything).
+          Return(errors.New("database error"))
+
+      service := NewTodoService(mockRepo, nil, nil, nil)
+
+      _, err := service.CreateTodo(context.Background(), 123, "Valid Title")
+      
+      require.Error(t, err)
+      assert.Contains(t, err.Error(), "database error")
+  }
+
+troubleshooting:
+  error_comparison_fails: |
+    Problem: errors.Is() returns false even though errors seem the same
+    Solution: Use errors.Is() with sentinel errors, not ==
+    
+    // Wrong
+    if err == ErrNotFound {  // May not work with wrapped errors
+    }
+    
+    // Right
+    if errors.Is(err, ErrNotFound) {  // Checks entire error chain
+    }
+  
+  nil_error_interface: |
+    Problem: Function returns non-nil error even though error is nil
+    Solution: Return nil explicitly, not typed nil
+    
+    // Wrong
+    func badFunc() error {
+        var err *MyError  // typed nil
+        return err        // Returns non-nil interface!
+    }
+    
+    // Right
+    func goodFunc() error {
+        var err *MyError
+        if err != nil {
+            return err
+        }
+        return nil  // Returns nil interface
+    }
+
+resources:
+  documentation: https://go.dev/blog/error-handling-and-go
+  go_1_13_errors: https://go.dev/blog/go1.13-errors
+  pkg_errors: https://github.com/pkg/errors
+  best_practices: https://github.com/golang/go/wiki/Errors

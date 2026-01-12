@@ -1,0 +1,509 @@
+name: supabase/rls
+description: Row-Level Security (RLS) with Supabase for multi-tenant data isolation
+category: database
+language: sql
+
+overview: |
+  Row-Level Security (RLS) in Supabase/PostgreSQL provides fine-grained access
+  control at the database level. RLS policies ensure users can only access their
+  own data, making it perfect for multi-tenant applications like the todo bot
+  where each Telegram user should only see their own todos.
+
+key_concepts:
+  - "RLS: Database-level access control on rows"
+  - "Policy: Rules defining which rows a user can access"
+  - "Service Role: Bypass RLS for admin operations"
+  - "Authenticated Role: Regular user access with RLS"
+  - "JWT Claims: User identity passed from application"
+
+enabling_rls: |
+  -- Enable RLS on a table
+  ALTER TABLE todos ENABLE ROW LEVEL SECURITY;
+
+  -- Disable RLS (not recommended for production)
+  ALTER TABLE todos DISABLE ROW LEVEL SECURITY;
+
+  -- Check if RLS is enabled
+  SELECT tablename, rowsecurity
+  FROM pg_tables
+  WHERE schemaname = 'public';
+
+basic_rls_policies: |
+  -- Policy 1: Users can only SELECT their own todos
+  CREATE POLICY "Users can view own todos"
+  ON todos
+  FOR SELECT
+  USING (telegram_user_id = current_setting('app.user_id')::BIGINT);
+
+  -- Policy 2: Users can only INSERT their own todos
+  CREATE POLICY "Users can insert own todos"
+  ON todos
+  FOR INSERT
+  WITH CHECK (telegram_user_id = current_setting('app.user_id')::BIGINT);
+
+  -- Policy 3: Users can only UPDATE their own todos
+  CREATE POLICY "Users can update own todos"
+  ON todos
+  FOR UPDATE
+  USING (telegram_user_id = current_setting('app.user_id')::BIGINT)
+  WITH CHECK (telegram_user_id = current_setting('app.user_id')::BIGINT);
+
+  -- Policy 4: Users can only DELETE their own todos
+  CREATE POLICY "Users can delete own todos"
+  ON todos
+  FOR DELETE
+  USING (telegram_user_id = current_setting('app.user_id')::BIGINT);
+
+  -- Combined policy for all operations
+  CREATE POLICY "Users manage own todos"
+  ON todos
+  FOR ALL
+  USING (telegram_user_id = current_setting('app.user_id')::BIGINT)
+  WITH CHECK (telegram_user_id = current_setting('app.user_id')::BIGINT);
+
+supabase_auth_integration: |
+  -- Supabase automatically sets auth.uid() for authenticated users
+  
+  -- Policy using Supabase auth.uid()
+  CREATE POLICY "Users can view own todos"
+  ON todos
+  FOR SELECT
+  USING (auth.uid() = user_id);
+
+  -- Policy for authenticated users only
+  CREATE POLICY "Authenticated users can read"
+  ON public_content
+  FOR SELECT
+  TO authenticated
+  USING (true);
+
+  -- Policy for anonymous users
+  CREATE POLICY "Anonymous users can read public content"
+  ON public_content
+  FOR SELECT
+  TO anon
+  USING (is_public = true);
+
+custom_rls_with_jwt_claims: |
+  -- For custom authentication (like Telegram bot)
+  -- Set user ID in session before queries
+  
+  -- In Go application code:
+  -- _, err := conn.Exec(ctx, "SET app.user_id = $1", telegramUserID)
+  
+  -- Then RLS policies can use:
+  CREATE POLICY "Custom auth policy"
+  ON todos
+  FOR ALL
+  USING (
+      telegram_user_id = NULLIF(current_setting('app.user_id', true), '')::BIGINT
+  );
+
+  -- Alternative: Use security definer function
+  CREATE OR REPLACE FUNCTION set_user_id(user_id BIGINT)
+  RETURNS void AS $$
+  BEGIN
+      PERFORM set_config('app.user_id', user_id::TEXT, false);
+  END;
+  $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+  -- Call from application
+  -- SELECT set_user_id(123456789);
+
+service_role_bypass: |
+  -- Service role bypasses RLS (for admin operations)
+  CREATE POLICY "Service role bypass"
+  ON todos
+  FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
+  -- Or use BYPASSRLS attribute
+  ALTER ROLE service_role BYPASSRLS;
+
+  -- Check which roles bypass RLS
+  SELECT rolname, rolbypassrls
+  FROM pg_roles
+  WHERE rolname IN ('anon', 'authenticated', 'service_role');
+
+advanced_rls_patterns: |
+  -- Time-based access control
+  CREATE POLICY "Allow edits within 24 hours"
+  ON todos
+  FOR UPDATE
+  USING (
+      telegram_user_id = current_setting('app.user_id')::BIGINT
+      AND created_at > NOW() - INTERVAL '24 hours'
+  );
+
+  -- Hierarchical access (users can see their team's todos)
+  CREATE POLICY "Team members can view team todos"
+  ON todos
+  FOR SELECT
+  USING (
+      telegram_user_id IN (
+          SELECT user_id FROM team_members
+          WHERE team_id = (
+              SELECT team_id FROM team_members
+              WHERE user_id = current_setting('app.user_id')::BIGINT
+          )
+      )
+  );
+
+  -- Status-based access (completed todos are read-only)
+  CREATE POLICY "Completed todos are read-only"
+  ON todos
+  FOR UPDATE
+  USING (
+      telegram_user_id = current_setting('app.user_id')::BIGINT
+      AND status != 'completed'
+  );
+
+  -- Soft delete visibility
+  CREATE POLICY "Hide deleted todos"
+  ON todos
+  FOR SELECT
+  USING (
+      telegram_user_id = current_setting('app.user_id')::BIGINT
+      AND deleted_at IS NULL
+  );
+
+  -- Admin override
+  CREATE POLICY "Admins can do anything"
+  ON todos
+  FOR ALL
+  USING (
+      EXISTS (
+          SELECT 1 FROM admins
+          WHERE user_id = current_setting('app.user_id')::BIGINT
+      )
+  );
+
+rls_with_joins: |
+  -- RLS applies to joined tables
+  CREATE TABLE user_preferences (
+      telegram_user_id BIGINT PRIMARY KEY,
+      language TEXT DEFAULT 'en',
+      timezone TEXT DEFAULT 'UTC'
+  );
+
+  ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
+
+  CREATE POLICY "Users manage own preferences"
+  ON user_preferences
+  FOR ALL
+  USING (telegram_user_id = current_setting('app.user_id')::BIGINT);
+
+  -- Query with join (RLS applies to both tables)
+  SELECT t.*, p.language, p.timezone
+  FROM todos t
+  LEFT JOIN user_preferences p ON t.telegram_user_id = p.telegram_user_id
+  WHERE t.status = 'pending';
+  -- RLS automatically filters both tables
+
+rls_performance_optimization: |
+  -- Problem: RLS policies can slow down queries
+  
+  -- Solution 1: Create index on RLS filter column
+  CREATE INDEX idx_todos_user_id ON todos (telegram_user_id);
+
+  -- Solution 2: Use materialized views for complex RLS
+  CREATE MATERIALIZED VIEW user_todo_summary AS
+  SELECT
+      telegram_user_id,
+      COUNT(*) AS total_todos,
+      COUNT(*) FILTER (WHERE status = 'completed') AS completed
+  FROM todos
+  GROUP BY telegram_user_id;
+
+  -- RLS on materialized view
+  ALTER MATERIALIZED VIEW user_todo_summary ENABLE ROW LEVEL SECURITY;
+
+  CREATE POLICY "Users see own summary"
+  ON user_todo_summary
+  FOR SELECT
+  USING (telegram_user_id = current_setting('app.user_id')::BIGINT);
+
+  -- Solution 3: Use security definer functions carefully
+  CREATE OR REPLACE FUNCTION get_user_todos(user_id BIGINT)
+  RETURNS SETOF todos AS $$
+  BEGIN
+      RETURN QUERY
+      SELECT * FROM todos
+      WHERE telegram_user_id = user_id;
+  END;
+  $$ LANGUAGE plpgsql SECURITY DEFINER;
+  -- This bypasses RLS, so validate user_id in application!
+
+testing_rls_policies: |
+  -- Test as service role (bypasses RLS)
+  SET ROLE service_role;
+  SELECT * FROM todos;  -- Sees all todos
+  RESET ROLE;
+
+  -- Test as specific user
+  SET app.user_id = '123456789';
+  SELECT * FROM todos;  -- Sees only user 123456789's todos
+  RESET app.user_id;
+
+  -- Test policy logic
+  SELECT * FROM todos
+  WHERE telegram_user_id = 123456789;  -- Manual filter
+
+  -- Compare with RLS
+  SET app.user_id = '123456789';
+  SELECT * FROM todos;  -- Should return same results
+
+  -- Check which policies are active
+  SELECT
+      schemaname,
+      tablename,
+      policyname,
+      permissive,
+      roles,
+      cmd,
+      qual,
+      with_check
+  FROM pg_policies
+  WHERE tablename = 'todos';
+
+golang_integration: |
+  package postgres
+
+  import (
+      "context"
+      "fmt"
+      "github.com/jackc/pgx/v5/pgxpool"
+  )
+
+  // Set user context before queries
+  func SetUserContext(ctx context.Context, conn *pgxpool.Conn, userID int64) error {
+      _, err := conn.Exec(ctx, "SET app.user_id = $1", userID)
+      return err
+  }
+
+  // Query with RLS (automatic filtering)
+  func (r *TodoRepository) List(ctx context.Context, userID int64) ([]*entity.Todo, error) {
+      // Get connection from pool
+      conn, err := r.pool.Acquire(ctx)
+      if err != nil {
+          return nil, err
+      }
+      defer conn.Release()
+
+      // Set user context for RLS
+      if err := SetUserContext(ctx, conn, userID); err != nil {
+          return nil, err
+      }
+
+      // Query - RLS automatically filters by userID
+      rows, err := conn.Query(ctx, `
+          SELECT id, telegram_user_id, title, status, priority, created_at
+          FROM todos
+          WHERE status = 'pending'
+          ORDER BY created_at DESC
+      `)
+      if err != nil {
+          return nil, err
+      }
+      defer rows.Close()
+
+      var todos []*entity.Todo
+      for rows.Next() {
+          var todo entity.Todo
+          err := rows.Scan(
+              &todo.ID,
+              &todo.TelegramUserID,
+              &todo.Title,
+              &todo.Status,
+              &todo.Priority,
+              &todo.CreatedAt,
+          )
+          if err != nil {
+              return nil, err
+          }
+          todos = append(todos, &todo)
+      }
+
+      return todos, rows.Err()
+  }
+
+  // Alternative: Use transaction-level context
+  func (r *TodoRepository) WithUserContext(ctx context.Context, userID int64, fn func(*pgxpool.Conn) error) error {
+      conn, err := r.pool.Acquire(ctx)
+      if err != nil {
+          return err
+      }
+      defer conn.Release()
+
+      // Begin transaction
+      tx, err := conn.Begin(ctx)
+      if err != nil {
+          return err
+      }
+      defer tx.Rollback(ctx)
+
+      // Set user context
+      if _, err := conn.Exec(ctx, "SET LOCAL app.user_id = $1", userID); err != nil {
+          return err
+      }
+
+      // Execute function
+      if err := fn(conn); err != nil {
+          return err
+      }
+
+      return tx.Commit(ctx)
+  }
+
+common_gotchas: |
+  -- Gotcha 1: Forgetting to enable RLS
+  -- Always enable RLS after creating table
+  CREATE TABLE todos (...);
+  ALTER TABLE todos ENABLE ROW LEVEL SECURITY;
+
+  -- Gotcha 2: Missing WITH CHECK clause
+  -- INSERT/UPDATE need WITH CHECK to validate new data
+  CREATE POLICY "Bad policy"
+  ON todos FOR INSERT
+  USING (telegram_user_id = current_setting('app.user_id')::BIGINT);
+  -- Should be:
+  CREATE POLICY "Good policy"
+  ON todos FOR INSERT
+  WITH CHECK (telegram_user_id = current_setting('app.user_id')::BIGINT);
+
+  -- Gotcha 3: Policy doesn't apply to service role
+  -- Service role bypasses RLS by default
+  -- Use separate policies or check role explicitly
+
+  -- Gotcha 4: Complex policies hurt performance
+  -- Keep policies simple, use indexes on filter columns
+
+  -- Gotcha 5: Forgetting to set user context
+  -- Always set app.user_id before queries
+  SET app.user_id = '123456789';
+  SELECT * FROM todos;
+
+security_best_practices: |
+  -- 1. Always enable RLS for user data tables
+  ALTER TABLE todos ENABLE ROW LEVEL SECURITY;
+  ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
+
+  -- 2. Use service role only for admin operations
+  -- Don't expose service role credentials to clients
+
+  -- 3. Validate user identity at application level
+  -- Don't trust user-provided IDs, verify JWT/session
+
+  -- 4. Test RLS policies thoroughly
+  -- Test as different users, check edge cases
+
+  -- 5. Use USING and WITH CHECK appropriately
+  CREATE POLICY "Complete policy"
+  ON todos FOR UPDATE
+  USING (telegram_user_id = current_setting('app.user_id')::BIGINT)  -- Can update these rows
+  WITH CHECK (telegram_user_id = current_setting('app.user_id')::BIGINT);  -- Can set to these values
+
+  -- 6. Avoid security definer functions
+  -- They bypass RLS, use sparingly and validate inputs
+
+  -- 7. Log RLS violations
+  CREATE OR REPLACE FUNCTION log_rls_violation()
+  RETURNS TRIGGER AS $$
+  BEGIN
+      INSERT INTO security_log (user_id, table_name, operation, timestamp)
+      VALUES (current_setting('app.user_id'), TG_TABLE_NAME, TG_OP, NOW());
+      RETURN NULL;
+  END;
+  $$ LANGUAGE plpgsql;
+
+migration_example: |
+  -- migrations/001_enable_rls.sql
+  -- Enable RLS on todos table
+  ALTER TABLE todos ENABLE ROW LEVEL SECURITY;
+
+  -- Create RLS policies
+  CREATE POLICY "users_manage_own_todos"
+  ON todos
+  FOR ALL
+  USING (telegram_user_id = NULLIF(current_setting('app.user_id', true), '')::BIGINT)
+  WITH CHECK (telegram_user_id = NULLIF(current_setting('app.user_id', true), '')::BIGINT);
+
+  -- Service role bypass
+  CREATE POLICY "service_role_bypass"
+  ON todos
+  FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
+  -- Create index for performance
+  CREATE INDEX IF NOT EXISTS idx_todos_user_id
+  ON todos (telegram_user_id);
+
+  -- Down migration
+  -- migrations/001_enable_rls_down.sql
+  DROP POLICY IF EXISTS "users_manage_own_todos" ON todos;
+  DROP POLICY IF EXISTS "service_role_bypass" ON todos;
+  ALTER TABLE todos DISABLE ROW LEVEL SECURITY;
+
+debugging_rls: |
+  -- Check if RLS is enabled
+  SELECT tablename, rowsecurity
+  FROM pg_tables
+  WHERE tablename = 'todos';
+
+  -- List all policies
+  SELECT * FROM pg_policies WHERE tablename = 'todos';
+
+  -- See policy definition
+  SELECT
+      policyname,
+      cmd,  -- Command: SELECT, INSERT, UPDATE, DELETE, ALL
+      qual,  -- USING clause
+      with_check  -- WITH CHECK clause
+  FROM pg_policies
+  WHERE tablename = 'todos';
+
+  -- Test policy as specific user
+  BEGIN;
+      SET app.user_id = '123456789';
+      SELECT * FROM todos;  -- Should only see user 123's todos
+  ROLLBACK;
+
+  -- Check current user context
+  SELECT current_setting('app.user_id', true);
+
+  -- Enable query logging
+  SET log_statement = 'all';
+
+troubleshooting:
+  no_rows_returned: |
+    Problem: Query returns no rows even though data exists
+    Solutions:
+    - Check if RLS is enabled: SELECT tablename, rowsecurity FROM pg_tables
+    - Verify user context is set: SELECT current_setting('app.user_id')
+    - Check policy logic: SELECT * FROM pg_policies WHERE tablename = 'todos'
+    - Test without RLS: SET ROLE service_role; SELECT * FROM todos;
+  
+  permission_denied: |
+    Problem: "permission denied for table" error
+    Solutions:
+    - Grant table permissions: GRANT ALL ON todos TO authenticated;
+    - Check role permissions: \dp todos
+    - Verify RLS policies exist for the role
+  
+  slow_queries: |
+    Problem: Queries slow after enabling RLS
+    Solutions:
+    - Create index on RLS filter column
+    - Simplify policy logic
+    - Use EXPLAIN ANALYZE to identify bottleneck
+    - Consider materialized views for complex policies
+
+resources:
+  documentation: https://www.postgresql.org/docs/current/ddl-rowsecurity.html
+  supabase_docs: https://supabase.com/docs/guides/auth/row-level-security
+  examples: https://github.com/supabase/supabase/tree/master/examples
+  best_practices: https://supabase.com/docs/guides/database/postgres/row-level-security

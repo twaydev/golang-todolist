@@ -1,0 +1,17 @@
+name: postgresql/indexing
+description: PostgreSQL indexing strategies for query optimization
+category: database
+language: sql
+
+overview: |
+  Database indexes speed up queries. Comprehensive coverage in postgresql/advanced.
+
+note: |
+  ⚠️ Complete indexing guide in postgresql/advanced skill.
+
+quick_reference: |
+  CREATE INDEX idx_todos_user ON todos(telegram_user_id);
+  CREATE INDEX idx_todos_search ON todos USING GIN(search_vector);
+
+see_also:
+  - postgresql/advanced (complete indexing strategies)

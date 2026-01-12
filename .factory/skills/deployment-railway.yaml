@@ -1,0 +1,79 @@
+name: deployment/railway
+description: Deploy applications to Railway platform
+category: devops
+language: yaml
+
+overview: |
+  Railway is a deployment platform that automatically builds and deploys
+  applications from Git repositories. Perfect for Go applications and databases.
+
+railway_toml: |
+  # railway.toml
+  [build]
+  builder = "dockerfile"
+  dockerfilePath = "Dockerfile"
+  
+  [deploy]
+  startCommand = "/app/bot"
+  healthcheckPath = "/health"
+  healthcheckTimeout = 30
+  restartPolicyType = "on_failure"
+  restartPolicyMaxRetries = 3
+
+deployment_process: |
+  # Install Railway CLI
+  npm install -g @railway/cli
+  
+  # Login
+  railway login
+  
+  # Link project
+  railway link
+  
+  # Add environment variables
+  railway variables set TELEGRAM_BOT_TOKEN=xxx
+  railway variables set DATABASE_URL=xxx
+  railway variables set PERPLEXITY_API_KEY=xxx
+  
+  # Deploy
+  railway up
+  
+  # View logs
+  railway logs
+  
+  # Open dashboard
+  railway open
+
+github_integration: |
+  # .github/workflows/deploy.yml
+  name: Deploy to Railway
+  
+  on:
+    push:
+      branches: [main]
+  
+  jobs:
+    deploy:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        
+        - name: Install Railway CLI
+          run: npm install -g @railway/cli
+        
+        - name: Deploy
+          run: railway up --service telegram-todo-bot
+          env:
+            RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+best_practices:
+  - Use railway.toml for configuration
+  - Set health check endpoint
+  - Use environment variables for secrets
+  - Enable auto-deploys from main branch
+  - Set up staging environment
+  - Monitor logs and metrics
+
+resources:
+  documentation: https://docs.railway.app
+  cli: https://docs.railway.app/develop/cli

@@ -1,0 +1,172 @@
+name: tdd/methodology
+description: Test-Driven Development methodology and RED-GREEN-REFACTOR cycle
+category: testing
+language: agnostic
+
+overview: |
+  Test-Driven Development (TDD) is a software development approach where tests
+  are written before the implementation code. The RED-GREEN-REFACTOR cycle
+  ensures code correctness and design quality from the start.
+
+red_green_refactor: |
+  # The TDD Cycle
+  
+  1. RED: Write a failing test
+     - Write test for desired behavior
+     - Run test → should FAIL
+     - Failure confirms test is working
+  
+  2. GREEN: Make the test pass
+     - Write minimal code to pass test
+     - Run test → should PASS
+     - Don't worry about perfect code yet
+  
+  3. REFACTOR: Improve the code
+     - Clean up implementation
+     - Improve design
+     - Run tests → should still PASS
+  
+  Repeat cycle for each new feature
+
+example_cycle: |
+  # Example: Implement Todo.Validate()
+  
+  # Step 1: RED - Write failing test
+  func TestTodo_Validate_EmptyTitle(t *testing.T) {
+      todo := &Todo{Title: ""}
+      
+      err := todo.Validate()
+      
+      require.Error(t, err)
+      assert.Contains(t, err.Error(), "title is required")
+  }
+  # Run test → FAILS (Validate() doesn't exist)
+  
+  # Step 2: GREEN - Minimal implementation
+  func (t *Todo) Validate() error {
+      if t.Title == "" {
+          return errors.New("title is required")
+      }
+      return nil
+  }
+  # Run test → PASSES
+  
+  # Step 3: REFACTOR - Improve
+  var ErrTitleRequired = errors.New("title is required")
+  
+  func (t *Todo) Validate() error {
+      if t.Title == "" {
+          return ErrTitleRequired
+      }
+      return nil
+  }
+  # Run test → still PASSES
+  
+  # Next cycle: Add length validation
+  func TestTodo_Validate_TitleTooLong(t *testing.T) {
+      todo := &Todo{Title: strings.Repeat("a", 501)}
+      
+      err := todo.Validate()
+      
+      require.Error(t, err)
+      assert.Contains(t, err.Error(), "title too long")
+  }
+  # Run test → FAILS
+  
+  # Make it pass
+  func (t *Todo) Validate() error {
+      if t.Title == "" {
+          return ErrTitleRequired
+      }
+      if len(t.Title) > 500 {
+          return errors.New("title must be at most 500 characters")
+      }
+      return nil
+  }
+  # Run test → PASSES
+
+tdd_benefits:
+  - Catches bugs early in development
+  - Documents expected behavior
+  - Improves code design (testable = well-designed)
+  - Enables fearless refactoring
+  - Reduces debugging time
+  - Provides regression safety
+  - Forces thinking about requirements first
+
+tdd_principles:
+  - Write test first, code second
+  - Write only enough code to pass the test
+  - Never write production code without a failing test
+  - Keep tests simple and focused
+  - Test behavior, not implementation
+  - One assertion per test (ideally)
+  - Tests should be fast
+  - Tests should be isolated
+
+test_sizes: |
+  # Unit Tests (fast, isolated)
+  func TestTodoService_CreateTodo(t *testing.T) {
+      mockRepo := new(MockTodoRepository)
+      service := NewTodoService(mockRepo, nil, nil)
+      
+      mockRepo.On("Create", mock.Anything, mock.Anything).Return(nil)
+      
+      todo, err := service.CreateTodo(ctx, 123, "Buy milk")
+      
+      assert.NoError(t, err)
+      assert.Equal(t, "Buy milk", todo.Title)
+  }
+  
+  # Integration Tests (slower, real dependencies)
+  func TestPostgresRepository_Create(t *testing.T) {
+      db := setupTestDatabase(t)
+      defer db.Close()
+      
+      repo := postgres.NewTodoRepository(db)
+      todo := &entity.Todo{Title: "Test"}
+      
+      err := repo.Create(context.Background(), todo)
+      
+      assert.NoError(t, err)
+      assert.NotEmpty(t, todo.ID)
+  }
+
+test_pyramid: |
+  # Test Distribution
+  
+         /\
+        /E2\    ← Few end-to-end tests (slow)
+       /────\
+      /  Int \  ← Some integration tests (medium)
+     /────────\
+    /   Unit   \ ← Many unit tests (fast)
+   /────────────\
+  
+  # Unit: 70%
+  # Integration: 20%
+  # E2E: 10%
+
+common_mistakes:
+  - Writing tests after code
+  - Skipping RED phase (test never fails)
+  - Writing too much code at once
+  - Not refactoring
+  - Testing implementation details
+  - Slow tests
+  - Coupled tests
+  - Not running tests frequently
+
+best_practices:
+  - Start with simplest test case
+  - Follow RED-GREEN-REFACTOR strictly
+  - Run tests after every change
+  - Keep test and production code in sync
+  - Delete tests for removed features
+  - Make tests readable (AAA pattern)
+  - Use descriptive test names
+  - Mock external dependencies
+
+resources:
+  book: "Test Driven Development: By Example by Kent Beck"
+  video: https://www.youtube.com/watch?v=EZ05e7EMOLM

@@ -1,0 +1,451 @@
+name: golang/echo-framework
+description: High performance, minimalist Go web framework for building REST APIs
+category: web-framework
+language: go
+
+overview: |
+  Echo is a high-performance, extensible, minimalist Go web framework.
+  It provides robust routing, middleware support, and is perfect for
+  building REST APIs with clean architecture patterns.
+
+features:
+  - Optimized HTTP router (zero dynamic memory allocation)
+  - Middleware support (built-in and custom)
+  - Data binding for JSON, XML, form data
+  - HTTP/2 support
+  - WebSocket support
+  - Automatic TLS via Let's Encrypt
+  - Template rendering
+  - Extensible middleware chain
+
+installation: |
+  go get github.com/labstack/echo/v4
+  go get github.com/labstack/echo/v4/middleware
+
+basic_server: |
+  package main
+
+  import (
+      "net/http"
+      "github.com/labstack/echo/v4"
+      "github.com/labstack/echo/v4/middleware"
+  )
+
+  func main() {
+      // Create Echo instance
+      e := echo.New()
+
+      // Middleware
+      e.Use(middleware.Logger())
+      e.Use(middleware.Recover())
+      e.Use(middleware.CORS())
+
+      // Routes
+      e.GET("/health", func(c echo.Context) error {
+          return c.JSON(http.StatusOK, map[string]string{
+              "status": "healthy",
+          })
+      })
+
+      // Start server
+      e.Logger.Fatal(e.Start(":8080"))
+  }
+
+routing_examples: |
+  package http
+
+  import (
+      "net/http"
+      "github.com/labstack/echo/v4"
+  )
+
+  func (s *Server) registerRoutes() {
+      // Health check
+      s.echo.GET("/health", s.handleHealth)
+
+      // API v1 group
+      v1 := s.echo.Group("/api/v1")
+      
+      // Apply middleware to group
+      v1.Use(s.authMiddleware)
+
+      // Todo routes
+      todos := v1.Group("/todos")
+      todos.POST("", s.createTodo)                    // POST /api/v1/todos
+      todos.GET("", s.listTodos)                      // GET /api/v1/todos
+      todos.GET("/:id", s.getTodo)                    // GET /api/v1/todos/:id
+      todos.PUT("/:id", s.updateTodo)                 // PUT /api/v1/todos/:id
+      todos.DELETE("/:id", s.deleteTodo)              // DELETE /api/v1/todos/:id
+      todos.POST("/:id/complete", s.completeTodo)     // POST /api/v1/todos/:id/complete
+      todos.GET("/search", s.searchTodos)             // GET /api/v1/todos/search
+
+      // Templates
+      templates := v1.Group("/templates")
+      templates.GET("", s.listTemplates)
+      templates.POST("/:name/instantiate", s.instantiateTemplate)
+
+      // User preferences
+      v1.GET("/preferences", s.getPreferences)
+      v1.PUT("/preferences/language", s.setLanguage)
+  }
+
+handler_examples: |
+  package http
+
+  import (
+      "net/http"
+      "github.com/labstack/echo/v4"
+  )
+
+  // CreateTodo handles POST /api/v1/todos
+  func (s *Server) createTodo(c echo.Context) error {
+      // Bind request body to DTO
+      var req CreateTodoRequest
+      if err := c.Bind(&req); err != nil {
+          return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body")
+      }
+
+      // Validate request
+      if err := c.Validate(&req); err != nil {
+          return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+      }
+
+      // Extract user ID from context (set by auth middleware)
+      userID := getUserIDFromContext(c)
+
+      // Call domain service
+      todo, err := s.todoService.CreateTodo(
+          c.Request().Context(),
+          userID,
+          req.Title,
+          req.toOptions(),
+      )
+      if err != nil {
+          return s.handleError(c, err)
+      }
+
+      // Return response
+      return c.JSON(http.StatusCreated, toTodoResponse(todo))
+  }
+
+  // ListTodos handles GET /api/v1/todos
+  func (s *Server) listTodos(c echo.Context) error {
+      userID := getUserIDFromContext(c)
+
+      // Parse query parameters
+      filters := parseListFilters(c)
+
+      // Call domain service
+      todos, err := s.todoService.ListTodos(c.Request().Context(), userID, filters)
+      if err != nil {
+          return s.handleError(c, err)
+      }
+
+      // Return response
+      return c.JSON(http.StatusOK, ListTodosResponse{
+          Todos: toTodoResponses(todos),
+          Total: len(todos),
+      })
+  }
+
+  // GetTodo handles GET /api/v1/todos/:id
+  func (s *Server) getTodo(c echo.Context) error {
+      userID := getUserIDFromContext(c)
+      todoID := c.Param("id")
+
+      todo, err := s.todoService.GetTodo(c.Request().Context(), userID, todoID)
+      if err != nil {
+          return s.handleError(c, err)
+      }
+
+      return c.JSON(http.StatusOK, toTodoResponse(todo))
+  }
+
+request_binding: |
+  // JSON binding
+  type CreateTodoRequest struct {
+      Title       string   `json:"title" validate:"required,min=1,max=500"`
+      Description *string  `json:"description,omitempty"`
+      Priority    *string  `json:"priority,omitempty" validate:"omitempty,oneof=low medium high"`
+      DueDate     *string  `json:"due_date,omitempty"`
+      Tags        []string `json:"tags,omitempty"`
+  }
+
+  func (s *Server) createTodo(c echo.Context) error {
+      var req CreateTodoRequest
+      
+      // Bind JSON, XML, or form data
+      if err := c.Bind(&req); err != nil {
+          return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+      }
+      
+      // Validate using validator (if configured)
+      if err := c.Validate(&req); err != nil {
+          return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+      }
+      
+      // Use the request...
+  }
+
+  // Query parameter binding
+  func (s *Server) listTodos(c echo.Context) error {
+      // Single query param
+      status := c.QueryParam("status")          // ?status=pending
+      
+      // Query param with default
+      page := c.QueryParam("page")
+      if page == "" {
+          page = "1"
+      }
+      
+      // Multiple query params
+      tags := c.QueryParams()["tags"]           // ?tags=work&tags=urgent
+      
+      // Bind to struct
+      var filters struct {
+          Status   string   `query:"status"`
+          Priority string   `query:"priority"`
+          Tags     []string `query:"tags"`
+          Page     int      `query:"page"`
+          Limit    int      `query:"limit"`
+      }
+      if err := c.Bind(&filters); err != nil {
+          return err
+      }
+  }
+
+  // Path parameter extraction
+  func (s *Server) getTodo(c echo.Context) error {
+      id := c.Param("id")                       // /todos/:id
+      
+      // Multiple path params
+      workspace := c.Param("workspace")         // /:workspace/todos/:id
+      todoID := c.Param("id")
+  }
+
+middleware_examples: |
+  package http
+
+  import (
+      "github.com/labstack/echo/v4"
+      "github.com/labstack/echo/v4/middleware"
+  )
+
+  func (s *Server) setupMiddleware() {
+      // Logger
+      s.echo.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+          Format: `{"time":"${time_rfc3339}","method":"${method}","uri":"${uri}",` +
+                  `"status":${status},"latency":"${latency_human}"}` + "\n",
+      }))
+
+      // Recover from panics
+      s.echo.Use(middleware.Recover())
+
+      // CORS
+      s.echo.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+          AllowOrigins: []string{"https://example.com", "https://app.example.com"},
+          AllowMethods: []string{echo.GET, echo.POST, echo.PUT, echo.DELETE},
+          AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAuthorization},
+      }))
+
+      // Rate limiting
+      s.echo.Use(middleware.RateLimiter(middleware.NewRateLimiterMemoryStore(20)))
+
+      // Request ID
+      s.echo.Use(middleware.RequestID())
+
+      // Gzip compression
+      s.echo.Use(middleware.Gzip())
+
+      // Timeout
+      s.echo.Use(middleware.TimeoutWithConfig(middleware.TimeoutConfig{
+          Timeout: 30 * time.Second,
+      }))
+  }
+
+custom_middleware: |
+  // Authentication middleware
+  func (s *Server) authMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+      return func(c echo.Context) error {
+          // Extract token from header
+          token := c.Request().Header.Get("Authorization")
+          if token == "" {
+              return echo.NewHTTPError(http.StatusUnauthorized, "Missing authorization token")
+          }
+
+          // Validate token (JWT, API key, etc.)
+          userID, err := s.validateToken(token)
+          if err != nil {
+              return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
+          }
+
+          // Store user ID in context
+          c.Set("user_id", userID)
+
+          // Call next handler
+          return next(c)
+      }
+  }
+
+  // Request logging middleware
+  func requestLogger(next echo.HandlerFunc) echo.HandlerFunc {
+      return func(c echo.Context) error {
+          start := time.Now()
+          
+          // Process request
+          err := next(c)
+          
+          // Log request details
+          log.Printf("[%s] %s %s - %d (%v)",
+              c.Request().Method,
+              c.Request().URL.Path,
+              c.RealIP(),
+              c.Response().Status,
+              time.Since(start),
+          )
+          
+          return err
+      }
+  }
+
+error_handling: |
+  package http
+
+  import (
+      "errors"
+      "net/http"
+      "github.com/labstack/echo/v4"
+      "todobot/internal/domain"
+  )
+
+  // Custom error handler
+  func customHTTPErrorHandler(err error, c echo.Context) {
+      code := http.StatusInternalServerError
+      message := "Internal server error"
+
+      // Handle Echo HTTP errors
+      if he, ok := err.(*echo.HTTPError); ok {
+          code = he.Code
+          message = he.Message.(string)
+      } else {
+          // Map domain errors to HTTP status codes
+          switch {
+          case errors.Is(err, domain.ErrNotFound):
+              code = http.StatusNotFound
+              message = "Resource not found"
+          case errors.Is(err, domain.ErrInvalidInput):
+              code = http.StatusBadRequest
+              message = err.Error()
+          case errors.Is(err, domain.ErrUnauthorized):
+              code = http.StatusUnauthorized
+              message = "Unauthorized"
+          case errors.Is(err, domain.ErrForbidden):
+              code = http.StatusForbidden
+              message = "Forbidden"
+          case errors.Is(err, domain.ErrConflict):
+              code = http.StatusConflict
+              message = err.Error()
+          }
+      }
+
+      // Send JSON error response
+      c.JSON(code, map[string]interface{}{
+          "error": map[string]interface{}{
+              "code":    code,
+              "message": message,
+          },
+      })
+  }
+
+  // Set custom error handler
+  e := echo.New()
+  e.HTTPErrorHandler = customHTTPErrorHandler
+
+validation: |
+  package http
+
+  import (
+      "github.com/go-playground/validator/v10"
+      "github.com/labstack/echo/v4"
+  )
+
+  // Custom validator
+  type CustomValidator struct {
+      validator *validator.Validate
+  }
+
+  func (cv *CustomValidator) Validate(i interface{}) error {
+      if err := cv.validator.Struct(i); err != nil {
+          return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+      }
+      return nil
+  }
+
+  // Setup validator
+  e := echo.New()
+  e.Validator = &CustomValidator{validator: validator.New()}
+
+  // Request struct with validation tags
+  type CreateTodoRequest struct {
+      Title       string   `json:"title" validate:"required,min=1,max=500"`
+      Description *string  `json:"description,omitempty"`
+      Priority    *string  `json:"priority,omitempty" validate:"omitempty,oneof=low medium high"`
+      DueDate     *string  `json:"due_date,omitempty" validate:"omitempty,datetime=2006-01-02"`
+      Tags        []string `json:"tags,omitempty" validate:"dive,min=1,max=50"`
+  }
+
+testing: |
+  package http
+
+  import (
+      "net/http"
+      "net/http/httptest"
+      "strings"
+      "testing"
+      
+      "github.com/labstack/echo/v4"
+      "github.com/stretchr/testify/assert"
+  )
+
+  func TestCreateTodo(t *testing.T) {
+      // Setup
+      e := echo.New()
+      req := httptest.NewRequest(http.MethodPost, "/api/v1/todos", 
+          strings.NewReader(`{"title":"Buy milk"}`))
+      req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+      rec := httptest.NewRecorder()
+      c := e.NewContext(req, rec)
+
+      // Mock services
+      mockService := mocks.NewMockTodoService(t)
+      server := &Server{todoService: mockService}
+
+      // Set expectations
+      mockService.EXPECT().CreateTodo(mock.Anything, mock.Anything, "Buy milk", mock.Anything).
+          Return(&entity.Todo{ID: "1", Title: "Buy milk"}, nil)
+
+      // Test
+      err := server.createTodo(c)
+
+      // Assert
+      assert.NoError(t, err)
+      assert.Equal(t, http.StatusCreated, rec.Code)
+      assert.Contains(t, rec.Body.String(), "Buy milk")
+  }
+
+best_practices:
+  - Use middleware for cross-cutting concerns (logging, auth, CORS)
+  - Group related routes with echo.Group
+  - Use DTOs for request/response (don't expose domain entities)
+  - Implement custom error handler for consistent error responses
+  - Use context for request-scoped values
+  - Validate input with validator tags
+  - Return proper HTTP status codes
+  - Use dependency injection for services
+  - Test handlers with httptest
+
+resources:
+  website: https://echo.labstack.com
+  github: https://github.com/labstack/echo
+  documentation: https://echo.labstack.com/guide/
+  examples: https://github.com/labstack/echo/tree/master/examples

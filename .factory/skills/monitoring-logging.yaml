@@ -1,0 +1,46 @@
+name: monitoring/logging
+description: Structured logging and application monitoring patterns
+category: devops
+language: go
+
+overview: |
+  Logging provides visibility into application behavior. Structured logging
+  produces machine-readable logs that can be easily searched and analyzed.
+
+structured_logging: |
+  package main
+  
+  import "log/slog"
+  
+  func main() {
+      slog.Info("todo created",
+          "user_id", 123456789,
+          "todo_id", "todo-1",
+          "title", "Buy milk",
+      )
+      
+      slog.Error("database error",
+          "operation", "create",
+          "error", err,
+      )
+  }
+
+log_levels: |
+  DEBUG - Detailed diagnostic information
+  INFO  - General informational messages
+  WARN  - Warning messages, not errors
+  ERROR - Error messages
+  FATAL - Critical errors, application exits
+
+best_practices:
+  - Use structured logging (JSON format)
+  - Include context (user_id, request_id)
+  - Don't log sensitive data (passwords, tokens)
+  - Use appropriate log levels
+  - Include timestamps
+  - Log errors with stack traces
+  - Aggregate logs centrally
+
+resources:
+  slog: https://pkg.go.dev/log/slog
+  zerolog: https://github.com/rs/zerolog

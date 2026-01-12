@@ -1,0 +1,126 @@
+name: rest-api/design
+description: RESTful API design principles and best practices
+category: api
+language: agnostic
+
+overview: |
+  REST (Representational State Transfer) is an architectural style for designing
+  networked applications. RESTful APIs use HTTP methods and follow conventions
+  for creating scalable, maintainable web services.
+
+http_methods: |
+  GET     - Retrieve resource(s)      (Safe, Idempotent)
+  POST    - Create new resource       (Not idempotent)
+  PUT     - Update/replace resource   (Idempotent)
+  PATCH   - Partial update            (Not idempotent)
+  DELETE  - Remove resource           (Idempotent)
+  HEAD    - Get headers only          (Safe, Idempotent)
+  OPTIONS - Get supported methods     (Safe, Idempotent)
+
+resource_naming: |
+  # Good: Plural nouns
+  GET    /api/v1/todos
+  GET    /api/v1/todos/123
+  POST   /api/v1/todos
+  PUT    /api/v1/todos/123
+  DELETE /api/v1/todos/123
+  
+  # Good: Nested resources
+  GET    /api/v1/users/123/todos
+  POST   /api/v1/users/123/todos
+  
+  # Good: Actions as resources
+  POST   /api/v1/todos/123/complete
+  POST   /api/v1/todos/123/archive
+  
+  # Bad: Verbs in URLs
+  GET    /api/v1/getTodos
+  POST   /api/v1/createTodo
+  DELETE /api/v1/deleteTodo/123
+
+status_codes: |
+  # 2xx Success
+  200 OK                  - GET, PUT, PATCH success
+  201 Created             - POST success
+  204 No Content          - DELETE success
+  
+  # 4xx Client Error
+  400 Bad Request         - Invalid input
+  401 Unauthorized        - Missing/invalid token
+  403 Forbidden           - Insufficient permissions
+  404 Not Found           - Resource doesn't exist
+  409 Conflict            - Business rule violation
+  422 Unprocessable       - Validation error
+  
+  # 5xx Server Error
+  500 Internal Error      - Unexpected server error
+  503 Service Unavailable - Temporary outage
+
+example_endpoints: |
+  # Todos API
+  GET    /api/v1/todos              - List todos (with pagination)
+  GET    /api/v1/todos?status=pending&priority=high
+  GET    /api/v1/todos/123          - Get specific todo
+  POST   /api/v1/todos              - Create todo
+  PUT    /api/v1/todos/123          - Update todo
+  PATCH  /api/v1/todos/123          - Partial update
+  DELETE /api/v1/todos/123          - Delete todo
+  
+  # Actions
+  POST   /api/v1/todos/123/complete - Mark complete
+  POST   /api/v1/todos/bulk-create  - Bulk operations
+
+pagination: |
+  # Query parameters
+  GET /api/v1/todos?page=2&limit=20
+  
+  # Response with metadata
+  {
+    "data": [...],
+    "pagination": {
+      "page": 2,
+      "limit": 20,
+      "total": 100,
+      "pages": 5
+    }
+  }
+
+filtering_sorting: |
+  # Filtering
+  GET /api/v1/todos?status=pending&priority=high&tags=work,urgent
+  
+  # Sorting
+  GET /api/v1/todos?sort=created_at&order=desc
+  GET /api/v1/todos?sort=-created_at (- for descending)
+  
+  # Field selection
+  GET /api/v1/todos?fields=id,title,status
+
+error_responses: |
+  {
+    "error": {
+      "code": "VALIDATION_ERROR",
+      "message": "Title is required",
+      "details": [
+        {
+          "field": "title",
+          "message": "This field is required"
+        }
+      ]
+    }
+  }
+
+best_practices:
+  - Use nouns for resources, not verbs
+  - Use plural names for collections
+  - Use HTTP methods correctly
+  - Return appropriate status codes
+  - Support filtering, sorting, pagination
+  - Version your API (/api/v1/)
+  - Use HTTPS only in production
+  - Implement rate limiting
+  - Provide comprehensive documentation
+
+resources:
+  rest_cookbook: https://restcookbook.com/
+  best_practices: https://github.com/microsoft/api-guidelines

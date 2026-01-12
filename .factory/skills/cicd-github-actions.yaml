@@ -1,0 +1,545 @@
+name: cicd/github-actions
+description: GitHub Actions workflows for CI/CD automation
+category: devops
+language: yaml
+
+overview: |
+  GitHub Actions is a CI/CD platform integrated directly into GitHub repositories.
+  It automates testing, building, and deploying applications using YAML workflow files.
+  Perfect for running tests on every push, deploying to production, and automating
+  repetitive tasks.
+
+key_concepts:
+  - "Workflow: Automated process defined in YAML"
+  - "Job: Set of steps that execute on the same runner"
+  - "Step: Individual task (run command, use action)"
+  - "Runner: Server that executes workflows (GitHub-hosted or self-hosted)"
+  - "Event: Trigger that starts a workflow (push, pull_request, schedule)"
+  - "Action: Reusable unit of code"
+
+workflow_structure: |
+  # .github/workflows/ci.yml
+  name: CI                          # Workflow name
+
+  on:                               # Triggers
+    push:
+      branches: [main, develop]
+    pull_request:
+      branches: [main]
+
+  jobs:                             # Jobs run in parallel by default
+    test:
+      runs-on: ubuntu-latest        # Runner OS
+      
+      steps:                        # Sequential steps
+        - uses: actions/checkout@v4 # Action: checkout code
+        
+        - name: Setup Go            # Step name
+          uses: actions/setup-go@v5
+          with:
+            go-version: '1.22'
+        
+        - name: Run tests           # Run shell command
+          run: go test ./...
+
+ci_workflow_example: |
+  # .github/workflows/ci.yml
+  name: CI
+
+  on:
+    push:
+      branches: [main, develop]
+    pull_request:
+      branches: [main]
+    workflow_dispatch:  # Allow manual trigger
+
+  env:
+    GO_VERSION: '1.22'
+
+  jobs:
+    lint:
+      name: Lint Code
+      runs-on: ubuntu-latest
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Set up Go
+          uses: actions/setup-go@v5
+          with:
+            go-version: ${{ env.GO_VERSION }}
+            cache: true  # Cache Go modules
+
+        - name: Run golangci-lint
+          uses: golangci/golangci-lint-action@v4
+          with:
+            version: latest
+            args: --timeout=5m
+
+        - name: Run gosec (security scan)
+          run: |
+            go install github.com/securego/gosec/v2/cmd/gosec@latest
+            gosec -fmt=json -out=gosec-report.json ./...
+
+        - name: Upload security report
+          uses: actions/upload-artifact@v4
+          with:
+            name: security-report
+            path: gosec-report.json
+
+    test:
+      name: Run Tests
+      runs-on: ubuntu-latest
+      
+      services:
+        postgres:
+          image: postgres:15
+          env:
+            POSTGRES_PASSWORD: postgres
+            POSTGRES_DB: testdb
+          options: >-
+            --health-cmd pg_isready
+            --health-interval 10s
+            --health-timeout 5s
+            --health-retries 5
+          ports:
+            - 5432:5432
+
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Set up Go
+          uses: actions/setup-go@v5
+          with:
+            go-version: ${{ env.GO_VERSION }}
+            cache: true
+
+        - name: Install mockery
+          run: go install github.com/vektra/mockery/v2@latest
+
+        - name: Generate mocks
+          run: make mocks
+
+        - name: Run unit tests
+          run: go test -v -race -coverprofile=coverage-unit.out ./internal/...
+          env:
+            DATABASE_URL: postgres://postgres:postgres@localhost:5432/testdb
+
+        - name: Run BDD tests
+          run: go test -v -coverprofile=coverage-bdd.out ./test/bdd/...
+
+        - name: Upload coverage to Codecov
+          uses: codecov/codecov-action@v4
+          with:
+            files: ./coverage-unit.out,./coverage-bdd.out
+            flags: unittests,bdd
+            name: codecov-umbrella
+            fail_ci_if_error: false
+
+    build:
+      name: Build Binary
+      runs-on: ubuntu-latest
+      needs: [lint, test]  # Wait for lint and test to pass
+      
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Set up Go
+          uses: actions/setup-go@v5
+          with:
+            go-version: ${{ env.GO_VERSION }}
+
+        - name: Build
+          run: |
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -ldflags="-w -s" -o bot cmd/bot/main.go
+
+        - name: Upload artifact
+          uses: actions/upload-artifact@v4
+          with:
+            name: bot-binary
+            path: bot
+
+cd_workflow_example: |
+  # .github/workflows/deploy.yml
+  name: Deploy to Railway
+
+  on:
+    push:
+      branches: [main]
+    workflow_dispatch:
+
+  jobs:
+    test:
+      name: Run Tests
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: actions/setup-go@v5
+          with:
+            go-version: '1.22'
+        - name: Run tests
+          run: make test
+
+    deploy:
+      name: Deploy to Railway
+      needs: test
+      runs-on: ubuntu-latest
+      environment: production  # Use environment for secrets
+      
+      steps:
+        - uses: actions/checkout@v4
+
+        - name: Install Railway CLI
+          run: npm install -g @railway/cli
+
+        - name: Deploy to Railway
+          run: railway up --service telegram-todo-bot
+          env:
+            RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+        - name: Wait for deployment
+          run: sleep 30
+
+        - name: Smoke test
+          run: |
+            response=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.RAILWAY_URL }}/health)
+            if [ "$response" != "200" ]; then
+              echo "Health check failed with status $response"
+              exit 1
+            fi
+            echo "Health check passed!"
+
+        - name: Notify on failure
+          if: failure()
+          uses: actions/github-script@v7
+          with:
+            script: |
+              github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Deployment failed',
+                body: `Deployment to production failed. Check the workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                labels: ['deployment', 'bug']
+              })
+
+docker_build_workflow: |
+  # .github/workflows/docker.yml
+  name: Build and Push Docker Image
+
+  on:
+    push:
+      branches: [main]
+      tags: ['v*']
+    pull_request:
+      branches: [main]
+
+  env:
+    REGISTRY: ghcr.io
+    IMAGE_NAME: ${{ github.repository }}
+
+  jobs:
+    build:
+      runs-on: ubuntu-latest
+      permissions:
+        contents: read
+        packages: write
+
+      steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Set up Docker Buildx
+          uses: docker/setup-buildx-action@v3
+
+        - name: Log in to Container Registry
+          uses: docker/login-action@v3
+          with:
+            registry: ${{ env.REGISTRY }}
+            username: ${{ github.actor }}
+            password: ${{ secrets.GITHUB_TOKEN }}
+
+        - name: Extract metadata
+          id: meta
+          uses: docker/metadata-action@v5
+          with:
+            images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+            tags: |
+              type=ref,event=branch
+              type=ref,event=pr
+              type=semver,pattern={{version}}
+              type=semver,pattern={{major}}.{{minor}}
+              type=sha
+
+        - name: Build and push
+          uses: docker/build-push-action@v5
+          with:
+            context: .
+            push: ${{ github.event_name != 'pull_request' }}
+            tags: ${{ steps.meta.outputs.tags }}
+            labels: ${{ steps.meta.outputs.labels }}
+            cache-from: type=gha
+            cache-to: type=gha,mode=max
+
+matrix_strategy: |
+  # Test against multiple Go versions
+  name: Test Matrix
+  
+  on: [push, pull_request]
+
+  jobs:
+    test:
+      runs-on: ${{ matrix.os }}
+      strategy:
+        matrix:
+          os: [ubuntu-latest, macos-latest, windows-latest]
+          go-version: ['1.21', '1.22', '1.23']
+        fail-fast: false  # Continue other jobs if one fails
+      
+      steps:
+        - uses: actions/checkout@v4
+        
+        - uses: actions/setup-go@v5
+          with:
+            go-version: ${{ matrix.go-version }}
+        
+        - name: Run tests
+          run: go test -v ./...
+
+        - name: Report
+          run: |
+            echo "Testing on ${{ matrix.os }} with Go ${{ matrix.go-version }}"
+
+reusable_workflows: |
+  # .github/workflows/reusable-test.yml
+  name: Reusable Test Workflow
+
+  on:
+    workflow_call:
+      inputs:
+        go-version:
+          required: true
+          type: string
+        run-integration-tests:
+          required: false
+          type: boolean
+          default: false
+      secrets:
+        database-url:
+          required: false
+
+  jobs:
+    test:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        
+        - uses: actions/setup-go@v5
+          with:
+            go-version: ${{ inputs.go-version }}
+        
+        - name: Unit tests
+          run: make test-unit
+        
+        - name: Integration tests
+          if: ${{ inputs.run-integration-tests }}
+          run: make test-integration
+          env:
+            DATABASE_URL: ${{ secrets.database-url }}
+
+  # .github/workflows/main.yml
+  name: Main Workflow
+
+  on: [push, pull_request]
+
+  jobs:
+    test:
+      uses: ./.github/workflows/reusable-test.yml
+      with:
+        go-version: '1.22'
+        run-integration-tests: true
+      secrets:
+        database-url: ${{ secrets.DATABASE_URL }}
+
+scheduled_workflows: |
+  # Run tests daily at midnight
+  name: Nightly Tests
+
+  on:
+    schedule:
+      - cron: '0 0 * * *'  # Daily at midnight UTC
+    workflow_dispatch:  # Allow manual trigger
+
+  jobs:
+    test:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: actions/setup-go@v5
+          with:
+            go-version: '1.22'
+        
+        - name: Run comprehensive tests
+          run: |
+            make test
+            make test-integration
+            make test-e2e
+
+        - name: Report results
+          if: failure()
+          uses: slackapi/slack-github-action@v1
+          with:
+            payload: |
+              {
+                "text": "Nightly tests failed",
+                "blocks": [
+                  {
+                    "type": "section",
+                    "text": {
+                      "type": "mrkdwn",
+                      "text": "Nightly tests failed. Check workflow run."
+                    }
+                  }
+                ]
+              }
+          env:
+            SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+caching: |
+  # Cache Go modules and build cache
+  jobs:
+    build:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        
+        - uses: actions/setup-go@v5
+          with:
+            go-version: '1.22'
+            cache: true  # Automatic caching of go.mod and go.sum
+        
+        # Manual caching
+        - name: Cache Go modules
+          uses: actions/cache@v4
+          with:
+            path: |
+              ~/.cache/go-build
+              ~/go/pkg/mod
+            key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+            restore-keys: |
+              ${{ runner.os }}-go-
+
+secrets_management: |
+  # Using repository secrets
+  jobs:
+    deploy:
+      runs-on: ubuntu-latest
+      steps:
+        - name: Deploy
+          run: railway up
+          env:
+            RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+            DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+  # Using environment secrets (more secure)
+  jobs:
+    deploy:
+      runs-on: ubuntu-latest
+      environment: production  # Defined in repo settings
+      steps:
+        - name: Deploy
+          run: railway up
+          env:
+            RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+conditional_execution: |
+  jobs:
+    deploy:
+      runs-on: ubuntu-latest
+      # Only run on main branch
+      if: github.ref == 'refs/heads/main'
+      
+      steps:
+        - name: Deploy only on main
+          run: echo "Deploying..."
+
+        - name: Skip on pull request
+          if: github.event_name != 'pull_request'
+          run: echo "Not a PR"
+
+        - name: Run only on tags
+          if: startsWith(github.ref, 'refs/tags/')
+          run: echo "Tag push detected"
+
+best_practices:
+  - Use caching for dependencies (go modules, npm packages)
+  - Run linting and tests in parallel jobs
+  - Use matrix strategy for multi-version testing
+  - Fail fast for quick feedback
+  - Use environments for production deployments
+  - Store secrets in GitHub Secrets, not in code
+  - Use workflow_dispatch for manual triggers
+  - Add status badges to README
+  - Use concurrency groups to cancel outdated runs
+  - Pin action versions (v4, not @main)
+
+common_patterns:
+  status_badge: |
+    # Add to README.md
+    ![CI](https://github.com/username/repo/workflows/CI/badge.svg)
+  
+  concurrency_control: |
+    # Cancel previous runs on new push
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+  
+  conditional_deploy: |
+    # Deploy only on successful tests
+    jobs:
+      test:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Run tests
+            run: make test
+      
+      deploy:
+        needs: test
+        if: github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        steps:
+          - name: Deploy
+            run: railway up
+
+troubleshooting:
+  workflow_not_triggered: |
+    Problem: Workflow doesn't run on push
+    Solutions:
+    - Check workflow file is in .github/workflows/
+    - Verify YAML syntax is valid
+    - Check branch name matches trigger
+    - Ensure workflow is enabled in repo settings
+  
+  secrets_not_working: |
+    Problem: Secret values not available
+    Solutions:
+    - Verify secret name matches exactly (case-sensitive)
+    - Check secret is defined in correct scope (repo/environment)
+    - Use ${{ secrets.NAME }}, not ${{ env.NAME }}
+    - Secrets not available in pull requests from forks (security)
+  
+  cache_not_restored: |
+    Problem: Cache not working, builds slow
+    Solutions:
+    - Check cache key is consistent
+    - Verify paths are correct
+    - Use restore-keys for partial matches
+    - Cache size limit is 10GB per repo
+
+resources:
+  documentation: https://docs.github.com/en/actions
+  workflow_syntax: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions
+  actions_marketplace: https://github.com/marketplace?type=actions
+  examples: https://github.com/actions/starter-workflows

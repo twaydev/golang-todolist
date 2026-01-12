@@ -1,0 +1,406 @@
+name: database/migrations
+description: Database migration strategies and best practices for schema evolution
+category: database
+language: sql
+
+overview: |
+  Database migrations are version-controlled schema changes that allow evolving
+  the database structure safely over time. Migrations ensure all environments
+  (development, staging, production) stay synchronized and provide rollback
+  capabilities when needed.
+
+key_concepts:
+  - "Up Migration: Apply changes (add table, column, index)"
+  - "Down Migration: Rollback changes (undo up migration)"
+  - "Version: Sequential number or timestamp identifying migration"
+  - "Migration Tool: Software that tracks and applies migrations"
+  - "Idempotent: Migration can run multiple times safely"
+  - "Forward-only: Never edit existing migrations, only add new ones"
+
+migration_structure: |
+  migrations/
+  ├── 001_initial_schema.sql
+  ├── 001_initial_schema_down.sql
+  ├── 002_add_code_sequence.sql
+  ├── 002_add_code_sequence_down.sql
+  ├── 003_add_full_text_search.sql
+  ├── 003_add_full_text_search_down.sql
+  └── 004_add_tags_index.sql
+
+  # Alternative naming with timestamps
+  migrations/
+  ├── 20260110120000_initial_schema.sql
+  ├── 20260110120000_initial_schema.down.sql
+  ├── 20260110130000_add_code_sequence.sql
+  └── 20260110130000_add_code_sequence.down.sql
+
+initial_migration: |
+  -- migrations/001_initial_schema.sql
+  -- Create initial tables
+
+  -- Enable extensions
+  CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+  CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+  -- User preferences table
+  CREATE TABLE IF NOT EXISTS user_preferences (
+      telegram_user_id BIGINT PRIMARY KEY,
+      language TEXT DEFAULT 'en' CHECK (language IN ('en', 'vi')),
+      timezone TEXT DEFAULT 'UTC',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- Todos table
+  CREATE TABLE IF NOT EXISTS todos (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      telegram_user_id BIGINT NOT NULL,
+      code TEXT,
+      title TEXT NOT NULL CHECK (LENGTH(title) BETWEEN 1 AND 500),
+      description TEXT,
+      due_date TIMESTAMPTZ,
+      priority TEXT DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
+      status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed')),
+      tags TEXT[] DEFAULT ARRAY[]::TEXT[],
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      CONSTRAINT unique_user_code UNIQUE (telegram_user_id, code)
+  );
+
+  -- Indexes
+  CREATE INDEX idx_todos_user_status ON todos(telegram_user_id, status);
+  CREATE INDEX idx_todos_user_created ON todos(telegram_user_id, created_at DESC);
+  CREATE INDEX idx_todos_due_date ON todos(due_date) WHERE status != 'completed';
+  CREATE INDEX idx_todos_tags ON todos USING GIN (tags);
+
+  -- Auto-update timestamps trigger
+  CREATE OR REPLACE FUNCTION update_updated_at()
+  RETURNS TRIGGER AS $$
+  BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  CREATE TRIGGER update_todos_updated_at
+  BEFORE UPDATE ON todos
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at();
+
+  CREATE TRIGGER update_user_preferences_updated_at
+  BEFORE UPDATE ON user_preferences
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at();
+
+  -- Down migration
+  -- migrations/001_initial_schema_down.sql
+  DROP TRIGGER IF EXISTS update_user_preferences_updated_at ON user_preferences;
+  DROP TRIGGER IF EXISTS update_todos_updated_at ON todos;
+  DROP FUNCTION IF EXISTS update_updated_at();
+  DROP TABLE IF EXISTS todos CASCADE;
+  DROP TABLE IF EXISTS user_preferences CASCADE;
+
+adding_columns: |
+  -- migrations/002_add_search_vector.sql
+  -- Add full-text search capability
+
+  -- Add search vector column
+  ALTER TABLE todos
+  ADD COLUMN IF NOT EXISTS search_vector tsvector;
+
+  -- Create GIN index
+  CREATE INDEX IF NOT EXISTS idx_todos_search
+  ON todos USING GIN (search_vector);
+
+  -- Create trigger function
+  CREATE OR REPLACE FUNCTION todos_search_trigger()
+  RETURNS TRIGGER AS $$
+  BEGIN
+      NEW.search_vector :=
+          setweight(to_tsvector('english', COALESCE(NEW.title, '')), 'A') ||
+          setweight(to_tsvector('english', COALESCE(NEW.description, '')), 'B');
+      RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  -- Create trigger
+  CREATE TRIGGER update_todos_search
+  BEFORE INSERT OR UPDATE OF title, description ON todos
+  FOR EACH ROW
+  EXECUTE FUNCTION todos_search_trigger();
+
+  -- Populate existing rows
+  UPDATE todos SET search_vector =
+      setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
+      setweight(to_tsvector('english', COALESCE(description, '')), 'B');
+
+  -- Down migration
+  -- migrations/002_add_search_vector_down.sql
+  DROP TRIGGER IF EXISTS update_todos_search ON todos;
+  DROP FUNCTION IF EXISTS todos_search_trigger();
+  DROP INDEX IF EXISTS idx_todos_search;
+  ALTER TABLE todos DROP COLUMN IF EXISTS search_vector;
+
+modifying_columns: |
+  -- migrations/003_modify_title_length.sql
+  -- Increase title max length from 500 to 1000
+
+  -- Remove old constraint
+  ALTER TABLE todos
+  DROP CONSTRAINT IF EXISTS todos_title_check;
+
+  -- Add new constraint
+  ALTER TABLE todos
+  ADD CONSTRAINT todos_title_check
+  CHECK (LENGTH(title) BETWEEN 1 AND 1000);
+
+  -- Down migration
+  -- migrations/003_modify_title_length_down.sql
+  ALTER TABLE todos DROP CONSTRAINT IF EXISTS todos_title_check;
+  ALTER TABLE todos ADD CONSTRAINT todos_title_check
+  CHECK (LENGTH(title) BETWEEN 1 AND 500);
+
+adding_tables: |
+  -- migrations/004_add_templates.sql
+  -- Add task templates feature
+
+  CREATE TABLE IF NOT EXISTS task_templates (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      telegram_user_id BIGINT NOT NULL,
+      name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      priority TEXT DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
+      tags TEXT[] DEFAULT ARRAY[]::TEXT[],
+      due_duration INTERVAL,
+      variables JSONB DEFAULT '{}'::JSONB,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      CONSTRAINT unique_user_template UNIQUE (telegram_user_id, name)
+  );
+
+  CREATE INDEX idx_templates_user ON task_templates(telegram_user_id);
+
+  CREATE TRIGGER update_task_templates_updated_at
+  BEFORE UPDATE ON task_templates
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at();
+
+  -- Down migration
+  -- migrations/004_add_templates_down.sql
+  DROP TRIGGER IF EXISTS update_task_templates_updated_at ON task_templates;
+  DROP TABLE IF EXISTS task_templates CASCADE;
+
+data_migrations: |
+  -- migrations/005_migrate_priority_values.sql
+  -- Change priority values: "P1"→"high", "P2"→"medium", "P3"→"low"
+
+  -- Create temporary column
+  ALTER TABLE todos ADD COLUMN priority_new TEXT;
+
+  -- Migrate data
+  UPDATE todos SET priority_new = CASE
+      WHEN priority = 'P1' THEN 'high'
+      WHEN priority = 'P2' THEN 'medium'
+      WHEN priority = 'P3' THEN 'low'
+      ELSE 'medium'
+  END;
+
+  -- Drop old column
+  ALTER TABLE todos DROP COLUMN priority;
+
+  -- Rename new column
+  ALTER TABLE todos RENAME COLUMN priority_new TO priority;
+
+  -- Add constraint
+  ALTER TABLE todos
+  ADD CONSTRAINT todos_priority_check
+  CHECK (priority IN ('low', 'medium', 'high'));
+
+  -- Set default
+  ALTER TABLE todos ALTER COLUMN priority SET DEFAULT 'medium';
+
+  -- Down migration (if data still exists in old format somewhere)
+  -- migrations/005_migrate_priority_values_down.sql
+  ALTER TABLE todos DROP CONSTRAINT IF EXISTS todos_priority_check;
+  ALTER TABLE todos ADD COLUMN priority_old TEXT;
+  
+  UPDATE todos SET priority_old = CASE
+      WHEN priority = 'high' THEN 'P1'
+      WHEN priority = 'medium' THEN 'P2'
+      WHEN priority = 'low' THEN 'P3'
+      ELSE 'P2'
+  END;
+  
+  ALTER TABLE todos DROP COLUMN priority;
+  ALTER TABLE todos RENAME COLUMN priority_old TO priority;
+
+zero_downtime_migrations: |
+  -- migrations/006_add_email_column.sql
+  -- Add email column without locking table
+
+  -- Step 1: Add column as nullable (fast, no lock)
+  ALTER TABLE users ADD COLUMN email TEXT;
+
+  -- Step 2: Add index concurrently (no lock)
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_email ON users(email);
+
+  -- Step 3: Backfill data in batches (separate migration or background job)
+  -- DO $$
+  -- DECLARE
+  --     batch_size INT := 1000;
+  --     last_id BIGINT := 0;
+  -- BEGIN
+  --     LOOP
+  --         UPDATE users
+  --         SET email = telegram_id || '@telegram.user'
+  --         WHERE id > last_id AND email IS NULL
+  --         LIMIT batch_size;
+  --         
+  --         EXIT WHEN NOT FOUND;
+  --         
+  --         SELECT MAX(id) INTO last_id FROM users WHERE email IS NOT NULL;
+  --         COMMIT;
+  --     END LOOP;
+  -- END $$;
+
+  -- Step 4: Add NOT NULL constraint (after backfill complete)
+  ALTER TABLE users ALTER COLUMN email SET NOT NULL;
+
+  -- Down migration
+  -- migrations/006_add_email_column_down.sql
+  DROP INDEX IF EXISTS idx_users_email;
+  ALTER TABLE users DROP COLUMN IF EXISTS email;
+
+migration_tools: |
+  # golang-migrate
+  migrate -database "postgres://localhost/db" -path ./migrations up
+  migrate -database "postgres://localhost/db" -path ./migrations down 1
+  migrate -database "postgres://localhost/db" -path ./migrations version
+
+  # goose
+  goose postgres "host=localhost" up
+  goose postgres "host=localhost" down
+  goose postgres "host=localhost" status
+
+  # SQL files with goose
+  -- migrations/001_initial.sql
+  -- +goose Up
+  CREATE TABLE todos (...);
+
+  -- +goose Down
+  DROP TABLE todos;
+
+  # Atlas (declarative)
+  atlas migrate diff --to "file://schema.hcl"
+  atlas migrate apply --url "postgres://localhost/db"
+
+golang_integration: |
+  package main
+
+  import (
+      "github.com/golang-migrate/migrate/v4"
+      _ "github.com/golang-migrate/migrate/v4/database/postgres"
+      _ "github.com/golang-migrate/migrate/v4/source/file"
+  )
+
+  func runMigrations(databaseURL string) error {
+      m, err := migrate.New(
+          "file://migrations",
+          databaseURL,
+      )
+      if err != nil {
+          return err
+      }
+      defer m.Close()
+
+      // Apply all up migrations
+      if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+          return err
+      }
+
+      return nil
+  }
+
+  // In main.go
+  func main() {
+      // Run migrations on startup
+      if err := runMigrations(config.DatabaseURL); err != nil {
+          log.Fatalf("Migration failed: %v", err)
+      }
+
+      // Start application
+      startServer()
+  }
+
+migration_versioning: |
+  -- Track applied migrations
+  CREATE TABLE IF NOT EXISTS schema_migrations (
+      version BIGINT PRIMARY KEY,
+      dirty BOOLEAN NOT NULL DEFAULT FALSE,
+      applied_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+  -- Check current version
+  SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1;
+
+  -- Mark migration as applied
+  INSERT INTO schema_migrations (version) VALUES (3);
+
+best_practices:
+  - Never modify existing migrations after they're applied
+  - Always provide down migrations for rollback
+  - Test migrations on copy of production data
+  - Keep migrations small and focused
+  - Use transactions where possible (not for CREATE INDEX CONCURRENTLY)
+  - Version control migrations with application code
+  - Run migrations automatically on deployment
+  - Test both up and down migrations
+  - Use IF EXISTS / IF NOT EXISTS for idempotency
+  - Avoid breaking changes (add nullable columns first)
+
+common_mistakes:
+  - Editing already-applied migrations
+  - No down migration provided
+  - Large data migrations without batching
+  - Not testing on production-sized data
+  - Breaking changes that require downtime
+  - Not using transactions
+  - Forgetting to update indexes
+  - Not handling concurrent migrations
+
+zero_downtime_checklist:
+  - Add columns as nullable, backfill later
+  - Create indexes concurrently
+  - Use multi-phase migrations for NOT NULL constraints
+  - Never drop columns immediately (deprecate first)
+  - Add new tables before referencing them
+  - Deploy backward-compatible code first
+
+troubleshooting:
+  migration_failed: |
+    Problem: Migration failed midway
+    Solution:
+    - Check dirty flag: SELECT * FROM schema_migrations
+    - Fix the issue manually
+    - Force version: migrate force <version>
+    - Re-run migration
+  
+  rollback_impossible: |
+    Problem: Can't roll back data migration
+    Solution:
+    - Always backup before destructive migrations
+    - Test rollback on staging first
+    - Consider keeping old and new columns temporarily
+  
+  concurrent_migrations: |
+    Problem: Two deployments run migrations simultaneously
+    Solution:
+    - Use migration locks (most tools support this)
+    - Or coordinate deployments (only one at a time)
+
+resources:
+  golang_migrate: https://github.com/golang-migrate/migrate
+  goose: https://github.com/pressly/goose
+  atlas: https://atlasgo.io/
+  best_practices: https://www.braintreepayments.com/blog/safe-operations-for-high-volume-postgresql/

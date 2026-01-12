@@ -1,0 +1,330 @@
+name: testing/testify
+description: Popular Go testing toolkit with assertions, mocking, and test suites
+category: testing
+language: go
+
+overview: |
+  Testify is the most popular Go testing toolkit, providing assertions,
+  mocking capabilities, and test suite functionality. It makes tests more
+  readable and maintainable compared to vanilla Go testing.
+
+packages:
+  assert: Assertions that fail tests but continue execution
+  require: Assertions that fail tests and stop execution immediately
+  mock: Mocking framework for interfaces
+  suite: Test suite support with setup/teardown
+
+installation: |
+  go get github.com/stretchr/testify/assert
+  go get github.com/stretchr/testify/require
+  go get github.com/stretchr/testify/mock
+  go get github.com/stretchr/testify/suite
+
+example_basic_assertions: |
+  package service
+
+  import (
+      "testing"
+      "github.com/stretchr/testify/assert"
+      "github.com/stretchr/testify/require"
+  )
+
+  func TestTodoService_CreateTodo(t *testing.T) {
+      // Arrange
+      service := NewTodoService(/* ... */)
+      
+      // Act
+      todo, err := service.CreateTodo(context.Background(), 123, "Buy milk", nil)
+      
+      // Assert with assert (continues on failure)
+      assert.NoError(t, err)
+      assert.NotNil(t, todo)
+      assert.Equal(t, "Buy milk", todo.Title)
+      assert.Equal(t, entity.StatusPending, todo.Status)
+      
+      // Assert with require (stops on failure)
+      require.NoError(t, err)
+      require.NotNil(t, todo)
+      
+      // Complex assertions
+      assert.Contains(t, todo.Code, "26-")
+      assert.Len(t, todo.Tags, 0)
+      assert.True(t, todo.CreatedAt.Before(time.Now()))
+      assert.False(t, todo.IsOverdue())
+  }
+
+example_table_driven_tests: |
+  func TestTodo_Validate(t *testing.T) {
+      tests := []struct {
+          name    string
+          todo    *entity.Todo
+          wantErr bool
+          errMsg  string
+      }{
+          {
+              name: "valid todo",
+              todo: &entity.Todo{
+                  Title:    "Buy milk",
+                  Priority: entity.PriorityMedium,
+                  Status:   entity.StatusPending,
+              },
+              wantErr: false,
+          },
+          {
+              name: "empty title",
+              todo: &entity.Todo{
+                  Title: "",
+              },
+              wantErr: true,
+              errMsg:  "title is required",
+          },
+          {
+              name: "title too long",
+              todo: &entity.Todo{
+                  Title: strings.Repeat("a", 501),
+              },
+              wantErr: true,
+              errMsg:  "title must be at most 500 characters",
+          },
+      }
+
+      for _, tt := range tests {
+          t.Run(tt.name, func(t *testing.T) {
+              err := tt.todo.Validate()
+              
+              if tt.wantErr {
+                  require.Error(t, err)
+                  assert.Contains(t, err.Error(), tt.errMsg)
+              } else {
+                  require.NoError(t, err)
+              }
+          })
+      }
+  }
+
+example_test_suite: |
+  package service
+
+  import (
+      "testing"
+      "github.com/stretchr/testify/suite"
+  )
+
+  // TodoServiceTestSuite defines the test suite
+  type TodoServiceTestSuite struct {
+      suite.Suite
+      service  *TodoService
+      todoRepo *mocks.MockTodoRepository
+      userRepo *mocks.MockUserRepository
+  }
+
+  // SetupTest runs before each test
+  func (s *TodoServiceTestSuite) SetupTest() {
+      s.todoRepo = mocks.NewMockTodoRepository(s.T())
+      s.userRepo = mocks.NewMockUserRepository(s.T())
+      s.service = NewTodoService(s.todoRepo, s.userRepo, nil, nil)
+  }
+
+  // TearDownTest runs after each test
+  func (s *TodoServiceTestSuite) TearDownTest() {
+      // Cleanup if needed
+  }
+
+  // Test methods
+  func (s *TodoServiceTestSuite) TestCreateTodo_Success() {
+      // Arrange
+      s.todoRepo.EXPECT().
+          Create(mock.Anything, mock.AnythingOfType("*entity.Todo")).
+          Return(nil)
+      
+      // Act
+      todo, err := s.service.CreateTodo(context.Background(), 123, "Buy milk", nil)
+      
+      // Assert
+      s.NoError(err)
+      s.NotNil(todo)
+      s.Equal("Buy milk", todo.Title)
+  }
+
+  func (s *TodoServiceTestSuite) TestCreateTodo_ValidationError() {
+      // Act
+      todo, err := s.service.CreateTodo(context.Background(), 123, "", nil)
+      
+      // Assert
+      s.Error(err)
+      s.Nil(todo)
+      s.Contains(err.Error(), "title is required")
+  }
+
+  // Run the test suite
+  func TestTodoServiceTestSuite(t *testing.T) {
+      suite.Run(t, new(TodoServiceTestSuite))
+  }
+
+common_assertions:
+  equality: |
+    assert.Equal(t, expected, actual)
+    assert.NotEqual(t, expected, actual)
+    assert.EqualValues(t, expected, actual)  // Converts types before comparing
+    assert.Exactly(t, expected, actual)      // Strict type and value equality
+  
+  truthiness: |
+    assert.True(t, value)
+    assert.False(t, value)
+  
+  nil_checks: |
+    assert.Nil(t, object)
+    assert.NotNil(t, object)
+  
+  errors: |
+    assert.NoError(t, err)
+    assert.Error(t, err)
+    assert.ErrorIs(t, err, target)
+    assert.ErrorAs(t, err, &target)
+    assert.ErrorContains(t, err, substring)
+  
+  collections: |
+    assert.Len(t, collection, expectedLen)
+    assert.Empty(t, collection)
+    assert.NotEmpty(t, collection)
+    assert.Contains(t, collection, element)
+    assert.NotContains(t, collection, element)
+    assert.ElementsMatch(t, expected, actual)  // Same elements, any order
+  
+  strings: |
+    assert.Contains(t, string, substring)
+    assert.NotContains(t, string, substring)
+    assert.Regexp(t, regexp, string)
+  
+  numeric: |
+    assert.Greater(t, actual, expected)
+    assert.GreaterOrEqual(t, actual, expected)
+    assert.Less(t, actual, expected)
+    assert.LessOrEqual(t, actual, expected)
+    assert.InDelta(t, expected, actual, delta)  // Float comparison
+  
+  types: |
+    assert.IsType(t, expectedType, object)
+    assert.Implements(t, (*Interface)(nil), object)
+
+example_mocking_with_testify: |
+  // Using testify/mock (manual mocks)
+  package mocks
+
+  import (
+      "context"
+      "github.com/stretchr/testify/mock"
+      "todobot/internal/domain/entity"
+  )
+
+  type MockTodoRepository struct {
+      mock.Mock
+  }
+
+  func (m *MockTodoRepository) Create(ctx context.Context, todo *entity.Todo) error {
+      args := m.Called(ctx, todo)
+      return args.Error(0)
+  }
+
+  func (m *MockTodoRepository) GetByID(ctx context.Context, userID int64, id string) (*entity.Todo, error) {
+      args := m.Called(ctx, userID, id)
+      if args.Get(0) == nil {
+          return nil, args.Error(1)
+      }
+      return args.Get(0).(*entity.Todo), args.Error(1)
+  }
+
+  // Usage in tests
+  func TestTodoService_GetTodo(t *testing.T) {
+      // Arrange
+      mockRepo := new(MockTodoRepository)
+      service := NewTodoService(mockRepo, nil, nil, nil)
+      
+      expectedTodo := &entity.Todo{
+          ID:    "todo-1",
+          Title: "Buy milk",
+      }
+      
+      // Set expectations
+      mockRepo.On("GetByID", mock.Anything, int64(123), "todo-1").
+          Return(expectedTodo, nil)
+      
+      // Act
+      todo, err := service.GetTodo(context.Background(), 123, "todo-1")
+      
+      // Assert
+      require.NoError(t, err)
+      assert.Equal(t, expectedTodo, todo)
+      
+      // Verify all expectations were met
+      mockRepo.AssertExpectations(t)
+  }
+
+advanced_mock_patterns: |
+  // Match any argument
+  mock.On("Create", mock.Anything, mock.Anything).Return(nil)
+  
+  // Match specific type
+  mock.On("Create", mock.Anything, mock.AnythingOfType("*entity.Todo")).Return(nil)
+  
+  // Match with custom matcher
+  mock.On("Create", mock.Anything, mock.MatchedBy(func(t *entity.Todo) bool {
+      return t.Title == "Buy milk"
+  })).Return(nil)
+  
+  // Return different values based on call count
+  mock.On("GetByID", mock.Anything, mock.Anything, mock.Anything).
+      Return(nil, errors.New("not found")).Once()
+  mock.On("GetByID", mock.Anything, mock.Anything, mock.Anything).
+      Return(&entity.Todo{}, nil).Once()
+  
+  // Run custom function
+  mock.On("Create", mock.Anything, mock.Anything).
+      Run(func(args mock.Arguments) {
+          todo := args.Get(1).(*entity.Todo)
+          todo.ID = "generated-id"
+      }).
+      Return(nil)
+
+best_practices:
+  - Use require for critical assertions (stops test immediately)
+  - Use assert for non-critical assertions (continues test)
+  - Prefer table-driven tests for multiple scenarios
+  - Use test suites for shared setup/teardown
+  - Always assert mock expectations (AssertExpectations)
+  - Use descriptive test names (TestFunction_Scenario_ExpectedResult)
+  - Keep tests focused (one concept per test)
+  - Use subtests (t.Run) for grouping related assertions
+
+common_patterns:
+  arrange_act_assert: |
+    func TestMyFunction(t *testing.T) {
+        // Arrange - set up test data
+        input := "test"
+        expected := "TEST"
+        
+        // Act - execute the function
+        result := MyFunction(input)
+        
+        // Assert - verify the result
+        assert.Equal(t, expected, result)
+    }
+  
+  test_helper_functions: |
+    func assertTodoEqual(t *testing.T, expected, actual *entity.Todo) {
+        t.Helper()  // Mark as helper for better error reporting
+        assert.Equal(t, expected.ID, actual.ID)
+        assert.Equal(t, expected.Title, actual.Title)
+        assert.Equal(t, expected.Status, actual.Status)
+    }
+
+integration_with:
+  - mockery (generates testify mocks from interfaces)
+  - godog (BDD testing with Gherkin)
+  - go test (native test runner)
+  - Coverage tools (go test -cover)
+
+resources:
+  github: https://github.com/stretchr/testify
+  documentation: https://pkg.go.dev/github.com/stretchr/testify
+  examples: https://github.com/stretchr/testify/tree/master/_examples

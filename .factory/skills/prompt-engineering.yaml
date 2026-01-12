@@ -1,0 +1,21 @@
+name: prompt-engineering
+description: Crafting effective prompts for AI language models
+category: ai-nlp
+language: agnostic
+
+overview: |
+  Prompt engineering is the practice of designing inputs to get desired outputs
+  from AI models. Complete examples in ai/perplexity-api skill.
+
+note: |
+  ⚠️ Comprehensive prompt engineering covered in ai/perplexity-api skill.
+
+best_practices: |
+  - Be specific about desired output format
+  - Provide examples (few-shot learning)
+  - Include context (current date, existing todos)
+  - Use clear structure
+  - Request JSON output for structured data
+
+see_also:
+  - ai/perplexity-api (complete system prompts for todo parsing)

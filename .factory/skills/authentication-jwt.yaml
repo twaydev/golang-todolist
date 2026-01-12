@@ -1,0 +1,190 @@
+name: authentication/jwt
+description: JWT (JSON Web Tokens) authentication for secure API access
+category: security
+language: go
+
+overview: |
+  JWT is a compact, URL-safe means of representing claims between two parties.
+  JWTs are commonly used for authentication and information exchange in APIs.
+  They contain encoded JSON with user information and are cryptographically signed.
+
+structure: |
+  # JWT Structure: header.payload.signature
+  
+  # Header (algorithm and token type)
+  {
+    "alg": "HS256",
+    "typ": "JWT"
+  }
+  
+  # Payload (claims)
+  {
+    "sub": "123456789",  # Subject (user ID)
+    "name": "John Doe",
+    "iat": 1516239022,   # Issued at
+    "exp": 1516242622    # Expiration
+  }
+  
+  # Signature
+  HMACSHA256(
+    base64UrlEncode(header) + "." + base64UrlEncode(payload),
+    secret
+  )
+
+golang_implementation: |
+  package auth
+
+  import (
+      "errors"
+      "time"
+      "github.com/golang-jwt/jwt/v5"
+  )
+
+  type Claims struct {
+      UserID int64  `json:"user_id"`
+      Email  string `json:"email"`
+      jwt.RegisteredClaims
+  }
+
+  type JWTService struct {
+      secretKey []byte
+      issuer    string
+  }
+
+  func NewJWTService(secretKey string, issuer string) *JWTService {
+      return &JWTService{
+          secretKey: []byte(secretKey),
+          issuer:    issuer,
+      }
+  }
+
+  func (s *JWTService) GenerateToken(userID int64, email string) (string, error) {
+      claims := Claims{
+          UserID: userID,
+          Email:  email,
+          RegisteredClaims: jwt.RegisteredClaims{
+              ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+              IssuedAt:  jwt.NewNumericDate(time.Now()),
+              NotBefore: jwt.NewNumericDate(time.Now()),
+              Issuer:    s.issuer,
+          },
+      }
+
+      token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+      return token.SignedString(s.secretKey)
+  }
+
+  func (s *JWTService) ValidateToken(tokenString string) (*Claims, error) {
+      token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+          if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+              return nil, errors.New("unexpected signing method")
+          }
+          return s.secretKey, nil
+      })
+
+      if err != nil {
+          return nil, err
+      }
+
+      if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+          return claims, nil
+      }
+
+      return nil, errors.New("invalid token")
+  }
+
+echo_middleware: |
+  package middleware
+
+  import (
+      "net/http"
+      "strings"
+      "github.com/labstack/echo/v4"
+  )
+
+  func JWTAuth(jwtService *auth.JWTService) echo.MiddlewareFunc {
+      return func(next echo.HandlerFunc) echo.HandlerFunc {
+          return func(c echo.Context) error {
+              authHeader := c.Request().Header.Get("Authorization")
+              if authHeader == "" {
+                  return echo.NewHTTPError(http.StatusUnauthorized, "Missing token")
+              }
+
+              tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+              
+              claims, err := jwtService.ValidateToken(tokenString)
+              if err != nil {
+                  return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
+              }
+
+              c.Set("user_id", claims.UserID)
+              c.Set("email", claims.Email)
+              
+              return next(c)
+          }
+      }
+  }
+
+  // Usage in routes
+  e.GET("/todos", getTodos, JWTAuth(jwtService))
+
+refresh_tokens: |
+  type TokenPair struct {
+      AccessToken  string `json:"access_token"`
+      RefreshToken string `json:"refresh_token"`
+  }
+
+  func (s *JWTService) GenerateTokenPair(userID int64) (*TokenPair, error) {
+      accessToken, err := s.generateAccessToken(userID)
+      if err != nil {
+          return nil, err
+      }
+
+      refreshToken, err := s.generateRefreshToken(userID)
+      if err != nil {
+          return nil, err
+      }
+
+      return &TokenPair{
+          AccessToken:  accessToken,
+          RefreshToken: refreshToken,
+      }, nil
+  }
+
+  func (s *JWTService) generateAccessToken(userID int64) (string, error) {
+      claims := Claims{
+          UserID: userID,
+          RegisteredClaims: jwt.RegisteredClaims{
+              ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
+              IssuedAt:  jwt.NewNumericDate(time.Now()),
+          },
+      }
+      token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+      return token.SignedString(s.secretKey)
+  }
+
+  func (s *JWTService) generateRefreshToken(userID int64) (string, error) {
+      claims := Claims{
+          UserID: userID,
+          RegisteredClaims: jwt.RegisteredClaims{
+              ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
+              IssuedAt:  jwt.NewNumericDate(time.Now()),
+          },
+      }
+      token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+      return token.SignedString(s.refreshKey)
+  }
+
+best_practices:
+  - Use strong secret keys (256 bits minimum)
+  - Short expiration for access tokens (15 minutes)
+  - Longer expiration for refresh tokens (7 days)
+  - Store secrets in environment variables
+  - Use HTTPS only
+  - Validate token on every request
+  - Include minimal claims (don't store sensitive data)
+  - Implement token refresh mechanism
+
+resources:
+  jwt_io: https://jwt.io
+  golang_jwt: https://github.com/golang-jwt/jwt

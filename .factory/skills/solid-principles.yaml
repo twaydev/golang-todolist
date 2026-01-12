@@ -1,0 +1,53 @@
+name: solid-principles
+description: SOLID design principles applied to Go
+category: architecture
+language: go
+
+overview: SOLID are five design principles for writing maintainable code.
+
+principles: |
+  S - Single Responsibility Principle
+      A struct/package should have one reason to change
+  
+  O - Open/Closed Principle
+      Open for extension, closed for modification
+  
+  L - Liskov Substitution Principle
+      Subtypes must be substitutable for base types
+  
+  I - Interface Segregation Principle
+      Many small interfaces better than one large
+  
+  D - Dependency Inversion Principle
+      Depend on abstractions, not concretions
+
+single_responsibility: |
+  // Bad: TodoService does too much
+  type TodoService struct {
+      db *sql.DB
+  }
+  func (s *TodoService) Create(todo *Todo) error { /* DB logic */ }
+  func (s *TodoService) SendEmail(email string) error { /* Email logic */ }
+  
+  // Good: Separate concerns
+  type TodoRepository struct { db *sql.DB }
+  type TodoService struct { repo TodoRepository }
+  type EmailService struct { smtp SMTPConfig }
+
+interface_segregation: |
+  // Bad: Fat interface
+  type Repository interface {
+      Create()
+      Read()
+      Update()
+      Delete()
+      Search()
+      Export()
+  }
+  
+  // Good: Small interfaces
+  type Creator interface { Create() }
+  type Reader interface { Read() }
+
+resources:
+  clean_code: "Clean Architecture by Robert C. Martin"

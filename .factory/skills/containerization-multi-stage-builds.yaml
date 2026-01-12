@@ -1,0 +1,68 @@
+name: containerization/multi-stage-builds
+description: Multi-stage Docker builds for optimized Go container images
+category: devops
+language: docker
+
+overview: |
+  Multi-stage builds use multiple FROM statements to create optimized images.
+  Build dependencies stay in build stage, only the binary goes to final image.
+
+basic_multi_stage: |
+  # Stage 1: Build
+  FROM golang:1.22-alpine AS builder
+  WORKDIR /app
+  COPY go.mod go.sum ./
+  RUN go mod download
+  COPY . .
+  RUN CGO_ENABLED=0 go build -o bot cmd/bot/main.go
+  
+  # Stage 2: Runtime
+  FROM alpine:latest
+  COPY --from=builder /app/bot /bot
+  CMD ["/bot"]
+
+optimized_example: |
+  # Complete optimized multi-stage build
+  FROM golang:1.22-alpine AS builder
+  
+  RUN apk add --no-cache git ca-certificates tzdata
+  
+  WORKDIR /app
+  
+  # Cache dependencies
+  COPY go.mod go.sum ./
+  RUN go mod download
+  
+  # Build
+  COPY . .
+  RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+      go build -ldflags="-w -s" -o /bot cmd/bot/main.go
+  
+  # Final stage
+  FROM scratch
+  
+  COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+  COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+  COPY --from=builder /bot /bot
+  
+  EXPOSE 8080
+  ENTRYPOINT ["/bot"]
+
+size_comparison: |
+  # golang:1.22 base: ~500MB
+  # alpine base: ~7MB
+  # scratch base: ~10MB (just binary + certs)
+  
+  # Check image sizes
+  docker images telegram-todo-bot
+
+best_practices:
+  - Use minimal final stage (alpine or scratch)
+  - Copy only necessary artifacts
+  - Order layers by change frequency
+  - Use build cache effectively
+  - Strip debug symbols (-ldflags="-w -s")
+  - Run as non-root user in final stage
+
+resources:
+  docker_docs: https://docs.docker.com/build/building/multi-stage/

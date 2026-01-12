@@ -1,0 +1,503 @@
+name: golang/interfaces
+description: Go interfaces design patterns and best practices
+category: golang
+language: go
+
+overview: |
+  Interfaces in Go provide a way to specify behavior without implementation.
+  They enable polymorphism, dependency injection, and testability. Go's
+  implicit interface satisfaction makes code more flexible and maintainable.
+
+key_principles:
+  - "Accept interfaces, return structs" - Rob Pike
+  - Interfaces are satisfied implicitly (no implements keyword)
+  - Small interfaces are better (1-3 methods)
+  - Define interfaces where they're used, not where they're implemented
+  - Empty interface interface{} accepts any type (use sparingly)
+
+basic_interface_definition: |
+  package domain
+
+  // Define interface where it's used (in domain layer)
+  type TodoRepository interface {
+      Create(ctx context.Context, todo *Todo) error
+      GetByID(ctx context.Context, userID int64, id string) (*Todo, error)
+      List(ctx context.Context, userID int64, filters ListFilters) ([]*Todo, error)
+      Update(ctx context.Context, todo *Todo) error
+      Delete(ctx context.Context, userID int64, id string) error
+  }
+
+  // Implement interface in another package (adapter layer)
+  package postgres
+
+  type PostgresTodoRepository struct {
+      pool *pgxpool.Pool
+  }
+
+  // Implicit satisfaction - no "implements" keyword needed
+  func (r *PostgresTodoRepository) Create(ctx context.Context, todo *entity.Todo) error {
+      // Implementation
+  }
+
+  // Return concrete type, accept interface
+  func NewTodoService(repo TodoRepository) *TodoService {
+      return &TodoService{repo: repo}
+  }
+
+interface_satisfaction: |
+  // Interface satisfaction is checked at compile time
+  package postgres
+
+  import "todobot/internal/domain/port/output"
+
+  // Verify interface satisfaction at compile time
+  var _ output.TodoRepository = (*PostgresTodoRepository)(nil)
+
+  // If PostgresTodoRepository doesn't implement all methods,
+  // this will fail to compile
+
+  type PostgresTodoRepository struct {
+      pool *pgxpool.Pool
+  }
+
+  func (r *PostgresTodoRepository) Create(ctx context.Context, todo *entity.Todo) error {
+      // Implementation
+  }
+
+  // ... implement other methods
+
+small_interfaces: |
+  // Bad: Large interface (violates Interface Segregation Principle)
+  type Repository interface {
+      Create(ctx context.Context, entity interface{}) error
+      Update(ctx context.Context, entity interface{}) error
+      Delete(ctx context.Context, id string) error
+      GetByID(ctx context.Context, id string) (interface{}, error)
+      List(ctx context.Context) ([]interface{}, error)
+      Search(ctx context.Context, query string) ([]interface{}, error)
+      Count(ctx context.Context) (int, error)
+      Exists(ctx context.Context, id string) (bool, error)
+  }
+
+  // Good: Small, focused interfaces
+  type Creator interface {
+      Create(ctx context.Context, todo *Todo) error
+  }
+
+  type Getter interface {
+      GetByID(ctx context.Context, userID int64, id string) (*Todo, error)
+  }
+
+  type Lister interface {
+      List(ctx context.Context, userID int64, filters ListFilters) ([]*Todo, error)
+  }
+
+  type Updater interface {
+      Update(ctx context.Context, todo *Todo) error
+  }
+
+  type Deleter interface {
+      Delete(ctx context.Context, userID int64, id string) error
+  }
+
+  // Compose interfaces
+  type TodoRepository interface {
+      Creator
+      Getter
+      Lister
+      Updater
+      Deleter
+  }
+
+interface_composition: |
+  package port
+
+  // Base interfaces
+  type Reader interface {
+      Read(ctx context.Context, id string) (interface{}, error)
+  }
+
+  type Writer interface {
+      Write(ctx context.Context, data interface{}) error
+  }
+
+  // Composed interface
+  type ReadWriter interface {
+      Reader
+      Writer
+  }
+
+  // Standard library example: io.ReadWriter
+  type ReadWriter interface {
+      io.Reader
+      io.Writer
+  }
+
+  // Usage
+  func ProcessData(rw ReadWriter) error {
+      // Can both read and write
+  }
+
+dependency_injection: |
+  package service
+
+  import "todobot/internal/domain/port/output"
+
+  // Service accepts interfaces (ports)
+  type TodoService struct {
+      todoRepo       output.TodoRepository
+      userRepo       output.UserRepository
+      intentAnalyzer output.IntentAnalyzer
+      notifier       output.Notifier
+  }
+
+  // Constructor accepts interfaces
+  func NewTodoService(
+      todoRepo output.TodoRepository,
+      userRepo output.UserRepository,
+      intentAnalyzer output.IntentAnalyzer,
+      notifier output.Notifier,
+  ) *TodoService {
+      return &TodoService{
+          todoRepo:       todoRepo,
+          userRepo:       userRepo,
+          intentAnalyzer: intentAnalyzer,
+          notifier:       notifier,
+      }
+  }
+
+  // Methods use injected interfaces
+  func (s *TodoService) CreateTodo(ctx context.Context, userID int64, title string) (*entity.Todo, error) {
+      todo := &entity.Todo{
+          TelegramUserID: userID,
+          Title:          title,
+      }
+
+      // Use interface method
+      if err := s.todoRepo.Create(ctx, todo); err != nil {
+          return nil, err
+      }
+
+      // Use another interface
+      if err := s.notifier.NotifyTodoCreated(ctx, userID, todo); err != nil {
+          // Log but don't fail
+          log.Printf("Failed to notify: %v", err)
+      }
+
+      return todo, nil
+  }
+
+empty_interface: |
+  // Empty interface accepts any type
+  var anything interface{}
+  anything = 42
+  anything = "hello"
+  anything = struct{}{}
+
+  // Type assertion
+  func processValue(v interface{}) {
+      // Type assertion with ok pattern (safe)
+      if str, ok := v.(string); ok {
+          fmt.Println("String:", str)
+      }
+
+      // Type assertion without ok (panics if wrong type)
+      str := v.(string)  // Panics if v is not string
+
+      // Type switch
+      switch val := v.(type) {
+      case string:
+          fmt.Println("String:", val)
+      case int:
+          fmt.Println("Int:", val)
+      case *Todo:
+          fmt.Println("Todo:", val.Title)
+      default:
+          fmt.Println("Unknown type")
+      }
+  }
+
+  // Better: Use specific types when possible
+  func processString(s string) {
+      fmt.Println("String:", s)
+  }
+
+interface_with_generics: |
+  // Go 1.18+ generics reduce need for interface{}
+  
+  // Old way with interface{}
+  type OldCache struct {
+      data map[string]interface{}
+  }
+
+  func (c *OldCache) Get(key string) (interface{}, bool) {
+      val, ok := c.data[key]
+      return val, ok
+  }
+
+  // New way with generics
+  type Cache[T any] struct {
+      data map[string]T
+  }
+
+  func (c *Cache[T]) Get(key string) (T, bool) {
+      val, ok := c.data[key]
+      return val, ok
+  }
+
+  // Usage
+  todoCache := &Cache[*Todo]{}
+  todo, ok := todoCache.Get("123")  // Returns *Todo, not interface{}
+
+testing_with_interfaces: |
+  package service
+
+  import (
+      "testing"
+      "github.com/stretchr/testify/mock"
+  )
+
+  // Mock implementation of interface
+  type MockTodoRepository struct {
+      mock.Mock
+  }
+
+  func (m *MockTodoRepository) Create(ctx context.Context, todo *entity.Todo) error {
+      args := m.Called(ctx, todo)
+      return args.Error(0)
+  }
+
+  func (m *MockTodoRepository) GetByID(ctx context.Context, userID int64, id string) (*entity.Todo, error) {
+      args := m.Called(ctx, userID, id)
+      if args.Get(0) == nil {
+          return nil, args.Error(1)
+      }
+      return args.Get(0).(*entity.Todo), args.Error(1)
+  }
+
+  // Test with mock
+  func TestTodoService_CreateTodo(t *testing.T) {
+      // Arrange
+      mockRepo := new(MockTodoRepository)
+      mockRepo.On("Create", mock.Anything, mock.Anything).Return(nil)
+
+      service := NewTodoService(mockRepo, nil, nil, nil)
+
+      // Act
+      todo, err := service.CreateTodo(context.Background(), 123, "Buy milk")
+
+      // Assert
+      require.NoError(t, err)
+      assert.NotNil(t, todo)
+      mockRepo.AssertExpectations(t)
+  }
+
+common_standard_interfaces: |
+  // io.Reader - read bytes
+  type Reader interface {
+      Read(p []byte) (n int, err error)
+  }
+
+  // io.Writer - write bytes
+  type Writer interface {
+      Write(p []byte) (n int, err error)
+  }
+
+  // io.Closer - close resources
+  type Closer interface {
+      Close() error
+  }
+
+  // fmt.Stringer - string representation
+  type Stringer interface {
+      String() string
+  }
+
+  // error - error interface
+  type error interface {
+      Error() string
+  }
+
+  // sort.Interface - for sorting
+  type Interface interface {
+      Len() int
+      Less(i, j int) bool
+      Swap(i, j int)
+  }
+
+  // Example: Implement fmt.Stringer
+  func (t *Todo) String() string {
+      return fmt.Sprintf("Todo{Code: %s, Title: %s, Status: %s}", 
+          t.Code, t.Title, t.Status)
+  }
+
+interface_patterns: |
+  // Pattern 1: Strategy pattern with interfaces
+  type PaymentProcessor interface {
+      ProcessPayment(amount float64) error
+  }
+
+  type CreditCardProcessor struct{}
+  func (c *CreditCardProcessor) ProcessPayment(amount float64) error { /* ... */ }
+
+  type PayPalProcessor struct{}
+  func (p *PayPalProcessor) ProcessPayment(amount float64) error { /* ... */ }
+
+  func checkout(processor PaymentProcessor, amount float64) error {
+      return processor.ProcessPayment(amount)
+  }
+
+  // Pattern 2: Adapter pattern
+  type LegacySystem struct{}
+  func (l *LegacySystem) OldMethod() string { return "old" }
+
+  // Adapt to new interface
+  type ModernInterface interface {
+      NewMethod() string
+  }
+
+  type LegacyAdapter struct {
+      legacy *LegacySystem
+  }
+
+  func (a *LegacyAdapter) NewMethod() string {
+      return a.legacy.OldMethod()
+  }
+
+  // Pattern 3: Decorator pattern
+  type Service interface {
+      DoWork() error
+  }
+
+  type LoggingDecorator struct {
+      wrapped Service
+  }
+
+  func (d *LoggingDecorator) DoWork() error {
+      log.Println("Starting work...")
+      err := d.wrapped.DoWork()
+      log.Println("Work completed")
+      return err
+  }
+
+interface_vs_struct: |
+  // When to use interfaces:
+  // ✅ Defining behavior contracts (ports in hexagonal architecture)
+  // ✅ Enabling dependency injection
+  // ✅ Testing with mocks
+  // ✅ Multiple implementations of same behavior
+  // ✅ Decoupling packages
+
+  // When to use structs:
+  // ✅ Data structures (entities, DTOs)
+  // ✅ Return types from functions
+  // ✅ Concrete implementations
+
+  // Good: Accept interface, return struct
+  func NewTodoService(repo TodoRepository) *TodoService {
+      return &TodoService{repo: repo}
+  }
+
+  // Bad: Accept struct, return interface
+  func BadNewService(repo *PostgresRepo) TodoRepository {
+      return repo  // Don't do this
+  }
+
+interface_segregation: |
+  // Interface Segregation Principle (ISP)
+  // Clients should not be forced to depend on interfaces they don't use
+
+  // Bad: Fat interface
+  type TodoRepository interface {
+      // CRUD
+      Create(ctx context.Context, todo *Todo) error
+      Update(ctx context.Context, todo *Todo) error
+      Delete(ctx context.Context, id string) error
+      GetByID(ctx context.Context, id string) (*Todo, error)
+      
+      // Queries
+      List(ctx context.Context) ([]*Todo, error)
+      Search(ctx context.Context, query string) ([]*Todo, error)
+      
+      // Analytics
+      CountByStatus(ctx context.Context, status string) (int, error)
+      GetStatistics(ctx context.Context) (*Statistics, error)
+      
+      // Bulk operations
+      BulkCreate(ctx context.Context, todos []*Todo) error
+      BulkUpdate(ctx context.Context, todos []*Todo) error
+  }
+
+  // Good: Segregated interfaces
+  type TodoCreator interface {
+      Create(ctx context.Context, todo *Todo) error
+  }
+
+  type TodoQuerier interface {
+      GetByID(ctx context.Context, id string) (*Todo, error)
+      List(ctx context.Context) ([]*Todo, error)
+  }
+
+  type TodoAnalyzer interface {
+      CountByStatus(ctx context.Context, status string) (int, error)
+      GetStatistics(ctx context.Context) (*Statistics, error)
+  }
+
+  // Services only depend on what they need
+  type SimpleTodoService struct {
+      creator TodoCreator  // Only needs create
+  }
+
+  type AnalyticsService struct {
+      analyzer TodoAnalyzer  // Only needs analytics
+  }
+
+best_practices:
+  - Define interfaces in consumer package, not provider package
+  - Keep interfaces small (1-3 methods)
+  - Accept interfaces, return structs
+  - Use interface{} sparingly, prefer specific types
+  - Verify interface satisfaction at compile time
+  - Don't create interfaces "just in case"
+  - Name interfaces with -er suffix (Reader, Writer, Handler)
+  - Use composition to build larger interfaces
+  - Avoid interface pollution (too many small interfaces)
+
+common_mistakes:
+  - Creating interfaces before you need them
+  - Making interfaces too large
+  - Returning interfaces instead of concrete types
+  - Using interface{} when specific types work
+  - Not using compile-time interface checks
+  - Defining interfaces next to implementations
+
+troubleshooting:
+  interface_not_satisfied: |
+    Error: "Type X does not implement interface Y"
+    Solution: Check method signatures match exactly
+    - Method names must match
+    - Parameter types must match
+    - Return types must match
+    - Receiver type doesn't matter (value vs pointer)
+  
+  nil_interface_confusion: |
+    Problem: Interface containing nil != nil interface
+    var repo TodoRepository
+    if repo == nil {  // true
+    }
+    
+    var concrete *PostgresRepo = nil
+    repo = concrete
+    if repo == nil {  // false! Interface is not nil, but value is
+    }
+    
+    Solution: Check both interface and value
+    if repo == nil || reflect.ValueOf(repo).IsNil() {
+        // Truly nil
+    }
+
+resources:
+  documentation: https://go.dev/tour/methods/9
+  effective_go: https://go.dev/doc/effective_go#interfaces
+  interface_design: https://go.dev/blog/laws-of-reflection
+  best_practices: https://github.com/golang/go/wiki/CodeReviewComments#interfaces
