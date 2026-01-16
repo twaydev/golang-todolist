@@ -12,20 +12,21 @@ skills:
 
 context:
   # Feature files (Gherkin scenarios)
-  - features/**/*.feature
-  
+  - app/features/**/*.feature
+
   # Test implementations
-  - test/bdd/**/*_steps_test.go
-  - test/unit/**/*_test.go
-  - test/mocks/**/*.go
-  
+  - app/test/bdd/**/*_steps_test.go
+  - app/test/unit/**/*_test.go
+  - app/test/mocks/**/*.go
+
   # Methodology documentation
   - docs/04-tdd-bdd-workflow.md
   - docs/05-testing-strategy.md
-  
+  - AGENTS.md
+
   # Domain entities (for understanding)
-  - internal/domain/entity/*.go
-  - internal/domain/port/**/*.go
+  - app/internal/domain/entity/*.go
+  - app/internal/domain/port/**/*.go
 
 instructions: |
   You are a Test-First Development specialist. Your PRIMARY role is to write 

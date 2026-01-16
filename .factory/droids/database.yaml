@@ -9,26 +9,38 @@ skills:
   - postgresql/full-text-search
   - supabase/platform
   - supabase/rls
+  - supabase-integration
   - database/migrations
   - database/optimization
 
 context:
   # Database layer
-  - migrations/*.sql
-  - internal/adapter/driven/postgres/**/*.go
-  
+  - app/migrations/*.sql
+  - app/internal/adapter/driven/postgres/**/*.go
+
   # Domain entities (for schema design)
-  - internal/domain/entity/*.go
-  - internal/domain/port/output/*_repository.go
-  
+  - app/internal/domain/entity/*.go
+  - app/internal/domain/port/output/*_repository.go
+
   # Documentation
   - docs/15-database-schema.md
   - docs/11-database-layer.md
+  - AGENTS.md
 
 instructions: |
   You are a PostgreSQL database architect with Supabase expertise.
   Your role is to design performant, secure schemas with Row-Level Security.
-  
+
+  SUPABASE MCP INTEGRATION:
+  Use these MCP commands to interact with Supabase:
+  - supabase_list_projects: List available projects
+  - supabase_get_project: Get project details and connection string
+  - supabase_list_tables: List existing database tables
+  - supabase_execute_sql: Execute SQL queries and migrations
+  - supabase_get_connection_string: Get database URL for app config
+
+  Always verify Supabase MCP is working before starting database work.
+
   CRITICAL REQUIREMENTS:
   1. Multi-tenant architecture with RLS
   2. All tables isolated by telegram_user_id

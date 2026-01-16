@@ -14,7 +14,7 @@ Design PostgreSQL schema with RLS policies and implement repository following th
 - Domain entity structure available (from domain-logic-agent)
 
 ## Tasks
-1. **Create Migrations** (`migrations/00X_{feature}.sql`)
+1. **Create Migrations** (`app/migrations/00X_{feature}.sql`)
    - Table definition with proper constraints
    - Primary keys (UUID)
    - Foreign keys with CASCADE rules
@@ -23,19 +23,19 @@ Design PostgreSQL schema with RLS policies and implement repository following th
    - Unique constraints
    - Include DOWN migration
 
-2. **Add Indexes** (`migrations/00X_{feature}_indexes.sql`)
+2. **Add Indexes** (`app/migrations/00X_{feature}_indexes.sql`)
    - B-tree indexes for common queries
    - GIN indexes for JSONB/arrays
    - Partial indexes where beneficial
    - Full-text search indexes if needed
 
-3. **Enable RLS Policies** (`migrations/00X_{feature}_rls.sql`)
+3. **Enable RLS Policies** (`app/migrations/00X_{feature}_rls.sql`)
    - Enable RLS on tables
    - Policy: Users can only access their own data
    - Service role bypass for admin operations
    - Test policies with different users
 
-4. **Implement Repository** (`internal/adapter/driven/postgres/{entity}_repo.go`)
+4. **Implement Repository** (`app/internal/adapter/driven/postgres/{entity}_repo.go`)
    - Implement port interface from domain
    - Use pgx/v5 with connection pooling
    - Parameterized queries (prevent SQL injection)
@@ -62,11 +62,11 @@ Design PostgreSQL schema with RLS policies and implement repository following th
 - database/optimization
 
 ## Output
-- `migrations/00X_{feature}.sql` ✅
-- `migrations/00X_{feature}_down.sql` ✅
-- `migrations/00X_{feature}_indexes.sql` ✅
-- `migrations/00X_{feature}_rls.sql` ✅
-- `internal/adapter/driven/postgres/{entity}_repo.go` ✅
+- `app/migrations/00X_{feature}.sql` ✅
+- `app/migrations/00X_{feature}_down.sql` ✅
+- `app/migrations/00X_{feature}_indexes.sql` ✅
+- `app/migrations/00X_{feature}_rls.sql` ✅
+- `app/internal/adapter/driven/postgres/{entity}_repo.go` ✅
 - Migrations apply successfully ✅
 
 ## Completion Signal
@@ -75,10 +75,10 @@ Post to Linear:
 ✅ database-agent complete
 
 Files created:
-- migrations/00X_{feature}.sql (UP/DOWN)
-- migrations/00X_{feature}_indexes.sql
-- migrations/00X_{feature}_rls.sql
-- internal/adapter/driven/postgres/{entity}_repo.go
+- app/migrations/00X_{feature}.sql (UP/DOWN)
+- app/migrations/00X_{feature}_indexes.sql
+- app/migrations/00X_{feature}_rls.sql
+- app/internal/adapter/driven/postgres/{entity}_repo.go
 
 Migration status: Applied successfully ✅
 RLS policies: Enabled and tested ✅

@@ -10,20 +10,20 @@ Phase 1 - RED State (Sequential)
 Write comprehensive BDD scenarios and unit tests that FAIL initially, establishing the RED state for test-driven development.
 
 ## Tasks
-1. **Write Gherkin Feature File** (`features/{feature}.feature`)
+1. **Write Gherkin Feature File** (`app/features/{feature}.feature`)
    - Happy path scenarios
    - Validation error scenarios
    - Edge cases (empty, null, max length, unicode, special chars)
    - Security scenarios (injection, XSS)
    - Concurrent access scenarios
 
-2. **Create Step Definitions** (`test/bdd/{feature}_steps_test.go`)
+2. **Create Step Definitions** (`app/test/bdd/{feature}_steps_test.go`)
    - Test context struct
    - Step functions (initially returning errors)
    - Helper functions for setup/teardown
    - Use in-memory adapters for isolation
 
-3. **Write Unit Tests** (`test/unit/domain/{service}_test.go`)
+3. **Write Unit Tests** (`app/test/unit/domain/{service}_test.go`)
    - Follow Arrange-Act-Assert pattern
    - Test success cases
    - Test all error paths
@@ -32,7 +32,7 @@ Write comprehensive BDD scenarios and unit tests that FAIL initially, establishi
 
 4. **Verify RED State**
    ```bash
-   go test ./test/... -v
+   go test ./app/test/... -v
    # All tests should FAIL (expected)
    ```
 
@@ -44,9 +44,9 @@ Write comprehensive BDD scenarios and unit tests that FAIL initially, establishi
 - tdd/methodology
 
 ## Output
-- `features/{feature}.feature` ✅
-- `test/bdd/{feature}_steps_test.go` ✅
-- `test/unit/domain/{service}_test.go` ✅
+- `app/features/{feature}.feature` ✅
+- `app/test/bdd/{feature}_steps_test.go` ✅
+- `app/test/unit/domain/{service}_test.go` ✅
 - All tests execute and FAIL ❌ (expected RED state)
 
 ## Completion Signal
@@ -55,9 +55,9 @@ Post to Linear:
 ✅ test-first-agent complete
 
 Files created:
-- features/{feature}.feature
-- test/bdd/{feature}_steps_test.go
-- test/unit/domain/{service}_test.go
+- app/features/{feature}.feature
+- app/test/bdd/{feature}_steps_test.go
+- app/test/unit/domain/{service}_test.go
 
 Test status: All FAILING (RED) ❌ (as expected)
 

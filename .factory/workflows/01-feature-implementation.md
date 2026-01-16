@@ -2,20 +2,36 @@
 
 ## Overview
 
-This workflow describes the complete process for implementing a new feature using all 6 specialized agents in a test-first, hexagonal architecture approach.
+This workflow describes the complete process for implementing a new feature using all 5 specialized agents in a test-first, hexagonal architecture approach.
+
+---
+
+## Prerequisites
+
+### Start Local Development Environment
+```bash
+# Start PostgreSQL, migrations, and API via Docker Compose
+make up
+
+# Verify services are running
+make ps
+
+# View logs if needed
+make logs
+```
 
 ---
 
 ## Complete Feature Flow
 
 ```
-Step 1: Test-First Agent (RED)     → Write tests that FAIL
-Step 2: Domain Logic Agent (GREEN)  → Make tests PASS
-Step 3: Database Agent              → Create schema & repositories
-Step 4: API Adapter Agent           → Build interfaces (HTTP + Bot)
-Step 5: AI/NLP Agent                → Add natural language support
-Step 6: Infrastructure Agent        → Deploy
-Step 7: Integration Testing         → Verify everything works
+Step 0: Start local environment     -> make up
+Step 1: Test-First Agent (RED)     -> Write tests that FAIL
+Step 2: Domain Logic Agent (GREEN)  -> Make tests PASS
+Step 3: Database Agent              -> Create schema & repositories
+Step 4: API Adapter Agent           -> Build REST API interface
+Step 5: Infrastructure Agent        -> Deploy
+Step 6: Integration Testing         -> Verify everything works
 ```
 
 ---
@@ -68,10 +84,10 @@ Ensure ALL tests FAIL initially (RED state).
 
 **Expected Output**:
 ```
-✅ features/todo_create.feature (10 scenarios)
-✅ test/bdd/todo_create_steps_test.go (step definitions)
-✅ test/unit/domain/todo_service_test.go (unit tests)
-❌ Test Status: All FAILING (RED) - as expected
+features/todo_create.feature (10 scenarios)
+test/bdd/todo_create_steps_test.go (step definitions)
+test/unit/domain/todo_service_test.go (unit tests)
+Test Status: All FAILING (RED) - as expected
 ```
 
 **Validation**:
@@ -106,12 +122,12 @@ Use skills:
 
 Implement:
 1. internal/domain/entity/todo.go:
-   - Todo struct with fields: ID, TelegramUserID, Code, Title, Description, 
+   - Todo struct with fields: ID, UserID, Code, Title, Description,
      DueDate, Priority, Status, Tags, CreatedAt, UpdatedAt
    - Validate() method (title 1-500 chars, valid priority)
    - MarkComplete() method
    - IsOverdue() method
-   
+
 2. internal/domain/entity/priority.go:
    - Priority type (low, medium, high)
    - Validation method
@@ -139,13 +155,13 @@ Make ALL tests PASS (GREEN state).
 
 **Expected Output**:
 ```
-✅ internal/domain/entity/todo.go
-✅ internal/domain/entity/priority.go
-✅ internal/domain/entity/status.go
-✅ internal/domain/port/output/todo_repository.go
-✅ internal/domain/service/todo_service.go
-✅ Test Status: All PASSING (GREEN)
-✅ Architecture: No infrastructure imports
+internal/domain/entity/todo.go
+internal/domain/entity/priority.go
+internal/domain/entity/status.go
+internal/domain/port/output/todo_repository.go
+internal/domain/service/todo_service.go
+Test Status: All PASSING (GREEN)
+Architecture: No infrastructure imports
 ```
 
 **Validation**:
@@ -154,7 +170,7 @@ Make ALL tests PASS (GREEN state).
 go test ./test/unit/domain/... -v
 
 # Verify no infrastructure imports
-go list -f '{{.Imports}}' internal/domain/... | grep -E '(postgres|http|telebot)'
+go list -f '{{.Imports}}' internal/domain/... | grep -E '(postgres|http)'
 # Should return nothing (no infrastructure imports)
 ```
 
@@ -175,10 +191,10 @@ Use skills:
 
 Create:
 1. migrations/001_initial_schema.sql:
-   - user_preferences table (telegram_user_id, language, timezone)
+   - user_preferences table (user_id, language, timezone)
    - todos table with:
      * id UUID PRIMARY KEY
-     * telegram_user_id BIGINT
+     * user_id BIGINT
      * code TEXT (YY-NNNN format)
      * title TEXT (1-500 chars constraint)
      * description TEXT
@@ -214,13 +230,13 @@ Create:
 
 **Expected Output**:
 ```
-✅ migrations/001_initial_schema.sql
-✅ migrations/001_initial_schema_down.sql
-✅ migrations/002_code_sequence.sql
-✅ migrations/003_enable_rls.sql
-✅ internal/adapter/driven/postgres/connection.go
-✅ internal/adapter/driven/postgres/todo_repo.go
-✅ Migrations apply successfully
+migrations/001_initial_schema.sql
+migrations/001_initial_schema_down.sql
+migrations/002_code_sequence.sql
+migrations/003_enable_rls.sql
+internal/adapter/driven/postgres/connection.go
+internal/adapter/driven/postgres/todo_repo.go
+Migrations apply successfully
 ```
 
 **Validation**:
@@ -243,11 +259,10 @@ psql $DATABASE_URL -c "SELECT tablename, rowsecurity FROM pg_tables WHERE tablen
 
 **Prompt**:
 ```
-Implement REST API and Telegram bot for todo creation.
+Implement REST API for todo creation.
 
 Use skills:
 - golang/echo-framework for HTTP API
-- golang/telebot for bot
 - authentication/jwt for security
 
 Implement:
@@ -270,28 +285,19 @@ Implement:
    - TodoResponse struct
    - Mapping functions
 
-5. internal/adapter/driving/telegram/bot.go:
-   - Bot setup with telebot
-
-6. internal/adapter/driving/telegram/handlers.go:
-   - /start command
-   - OnText handler (natural language)
-
 NO business logic in adapters - only translation.
 ```
 
 **Expected Output**:
 ```
-✅ internal/adapter/driving/http/*.go
-✅ internal/adapter/driving/telegram/*.go
-✅ POST /api/v1/todos endpoint works
-✅ Telegram bot responds to messages
+internal/adapter/driving/http/*.go
+POST /api/v1/todos endpoint works
 ```
 
 **Validation**:
 ```bash
 # Start server
-go run cmd/bot/main.go
+go run cmd/api/main.go
 
 # Test API (in another terminal)
 curl -X POST http://localhost:8080/api/v1/todos \
@@ -304,57 +310,7 @@ curl -X POST http://localhost:8080/api/v1/todos \
 
 ---
 
-### Step 5: AI/NLP Agent
-
-**Agent**: `@ai-nlp-agent`
-
-**Prompt**:
-```
-Implement AI-powered intent parsing for natural language todo creation.
-
-Use skills:
-- ai/perplexity-api for API integration
-- nlp/intent-classification
-- prompt-engineering
-
-Implement:
-1. internal/adapter/driven/perplexity/client.go:
-   - Perplexity API client
-   - Chat() method with retries
-
-2. internal/domain/service/intent_service.go:
-   - Analyze() method
-   - Parse message like "Buy milk tomorrow" into structured intent
-   - Support English and Vietnamese
-
-3. prompts/system_prompt_en.txt:
-   - System prompt for intent parsing
-   - Examples of create, update, delete, list actions
-
-Parse messages like:
-- "Buy milk tomorrow" → create todo with due_date
-- "Urgent: Call mom" → create todo with high priority
-- "Done with 26-0001" → complete todo
-```
-
-**Expected Output**:
-```
-✅ internal/adapter/driven/perplexity/client.go
-✅ internal/domain/service/intent_service.go
-✅ prompts/system_prompt_en.txt
-✅ Natural language parsing works
-```
-
-**Validation**:
-```bash
-# Test via Telegram bot
-# Send: "Buy milk tomorrow"
-# Should create todo with tomorrow's due date
-```
-
----
-
-### Step 6: Infrastructure Agent
+### Step 5: Infrastructure Agent
 
 **Agent**: `@infrastructure-agent`
 
@@ -390,18 +346,18 @@ Create:
 
 **Expected Output**:
 ```
-✅ .github/workflows/ci.yml
-✅ .github/workflows/deploy.yml
-✅ Dockerfile
-✅ railway.toml
-✅ Makefile
+.github/workflows/ci.yml
+.github/workflows/deploy.yml
+Dockerfile
+railway.toml
+Makefile
 ```
 
 **Validation**:
 ```bash
 # Test Docker build
-docker build -t telegram-todo-bot .
-docker run --env-file .env telegram-todo-bot
+docker build -t golang-todolist .
+docker run --env-file .env golang-todolist
 
 # Test CI locally
 make lint
@@ -410,18 +366,22 @@ make test
 
 ---
 
-### Step 7: Integration Testing
+### Step 6: Integration Testing
 
 **Manual verification**:
 
 ```bash
-# 1. Run all tests
+# 1. Ensure local environment is running
+make up
+make ps
+
+# 2. Run all tests
 make test
 
-# 2. Start application
-make run
+# 3. Run Docker-based integration tests
+make test-docker
 
-# 3. Test REST API
+# 4. Test REST API
 curl -X POST http://localhost:8080/api/v1/todos \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -431,12 +391,8 @@ curl -X POST http://localhost:8080/api/v1/todos \
     "tags": ["shopping"]
   }'
 
-# 4. Test Telegram bot
-# Send message: "Buy milk tomorrow"
-# Bot should create todo with due date
-
-# 5. Verify in database
-psql $DATABASE_URL -c "SELECT code, title, due_date FROM todos ORDER BY created_at DESC LIMIT 5;"
+# 5. Verify in database (connect to Docker PostgreSQL)
+docker compose exec db psql -U postgres -d todolist -c "SELECT code, title, due_date FROM todos ORDER BY created_at DESC LIMIT 5;"
 
 # 6. Deploy to staging
 git push origin main
@@ -448,15 +404,13 @@ git push origin main
 
 ## Success Criteria
 
-- ✅ All unit tests pass
-- ✅ All BDD scenarios pass
-- ✅ REST API endpoint works
-- ✅ Telegram bot responds
-- ✅ Natural language parsing works
-- ✅ Database has proper data
-- ✅ RLS policies enforced
-- ✅ CI/CD pipeline succeeds
-- ✅ Application deployed to Railway
+- All unit tests pass
+- All BDD scenarios pass
+- REST API endpoint works
+- Database has proper data
+- RLS policies enforced
+- CI/CD pipeline succeeds
+- Application deployed to Railway
 
 ---
 
@@ -475,18 +429,43 @@ go test ./test/... -v
 ### Architecture Violations
 ```bash
 # Check for bad imports
-go list -f '{{.Imports}}' internal/domain/... | grep -E '(postgres|echo|telebot)'
+go list -f '{{.Imports}}' internal/domain/... | grep -E '(postgres|echo)'
 
 # If found, refactor to use ports
 ```
 
 ### Database Connection Issues
 ```bash
-# Verify connection
-psql $DATABASE_URL -c "SELECT 1;"
+# Verify Docker database is running
+make ps
+
+# Restart database if needed
+make restart
+
+# Connect to Docker PostgreSQL
+docker compose exec db psql -U postgres -d todolist -c "SELECT 1;"
 
 # Check RLS is working
-psql $DATABASE_URL -c "SET app.user_id = '123'; SELECT * FROM todos;"
+docker compose exec db psql -U postgres -d todolist -c "SET app.user_id = '123'; SELECT * FROM todos;"
+```
+
+### Docker Compose Issues
+```bash
+# Check service status
+make ps
+
+# View logs for specific service
+make logs      # API logs
+make logs-db   # Database logs
+
+# Rebuild and restart all services
+make down
+make up-all
+
+# Reset database (WARNING: deletes data)
+make down
+docker volume rm golang-todolist_postgres_data
+make up
 ```
 
 ---
@@ -501,4 +480,4 @@ After completing "Create Todo", follow the same workflow for:
 - Search Todos
 - Task Templates
 
-Each feature goes through the same 7 steps.
+Each feature goes through the same 6 steps.

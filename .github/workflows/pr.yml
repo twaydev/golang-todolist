@@ -1,0 +1,164 @@
+name: Pull Request
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+env:
+  GO_VERSION: '1.23'
+
+jobs:
+  # ===========================================================================
+  # PR Validation
+  # ===========================================================================
+  validate:
+    name: Validate PR
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check PR title format
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          # Check for conventional commit format (optional)
+          if [[ ! "$PR_TITLE" =~ ^(feat|fix|docs|style|refactor|test|chore|build|ci|perf|revert)(\(.+\))?: ]]; then
+            echo "::warning::PR title doesn't follow conventional commit format"
+            echo "Recommended format: type(scope): description"
+            echo "Types: feat, fix, docs, style, refactor, test, chore, build, ci, perf, revert"
+          fi
+
+      - name: Check for breaking changes
+        run: |
+          # Check if PR has breaking changes label or mentions
+          if [[ "${{ github.event.pull_request.body }}" == *"BREAKING CHANGE"* ]]; then
+            echo "::warning::This PR contains breaking changes"
+          fi
+
+  # ===========================================================================
+  # Code Quality Gate
+  # ===========================================================================
+  quality-gate:
+    name: Quality Gate
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -l ./app)" ]; then
+            echo "::error::Code is not formatted. Run 'gofmt -w ./app'"
+            gofmt -l ./app
+            exit 1
+          fi
+
+      - name: Check go.mod tidy
+        run: |
+          go mod tidy
+          if [ -n "$(git diff --name-only go.mod go.sum)" ]; then
+            echo "::error::go.mod or go.sum is not tidy. Run 'go mod tidy'"
+            exit 1
+          fi
+
+      - name: Run vet
+        run: go vet ./app/...
+
+  # ===========================================================================
+  # Test Coverage Check
+  # ===========================================================================
+  coverage:
+    name: Coverage Check
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests with coverage
+        run: |
+          go test ./app/... -coverprofile=coverage.out -covermode=atomic
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Total coverage: ${COVERAGE}%"
+          echo "coverage=${COVERAGE}" >> $GITHUB_OUTPUT
+
+          # Warn if coverage is below threshold (adjust as needed)
+          if (( $(echo "$COVERAGE < 50" | bc -l) )); then
+            echo "::warning::Code coverage is below 50%"
+          fi
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: false
+
+  # ===========================================================================
+  # BDD Tests
+  # ===========================================================================
+  bdd-tests:
+    name: BDD Tests
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run BDD tests
+        run: go test ./app/test/bdd/... -v
+
+  # ===========================================================================
+  # PR Summary
+  # ===========================================================================
+  summary:
+    name: PR Summary
+    runs-on: ubuntu-latest
+    needs: [validate, quality-gate, coverage, bdd-tests]
+    if: always() && github.event.pull_request.draft == false
+
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "## Pull Request Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Validation | ${{ needs.validate.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Quality Gate | ${{ needs.quality-gate.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Coverage | ${{ needs.coverage.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| BDD Tests | ${{ needs.bdd-tests.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY

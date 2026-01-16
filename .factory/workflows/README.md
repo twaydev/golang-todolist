@@ -2,7 +2,7 @@
 
 ## Overview
 
-This directory contains detailed workflows for developing the Telegram Todo Bot using the multi-agent system with test-driven development and hexagonal architecture.
+This directory contains detailed workflows for developing the Go Todo List REST API using the multi-agent system with test-driven development and hexagonal architecture.
 
 ---
 
@@ -12,7 +12,7 @@ This directory contains detailed workflows for developing the Telegram Todo Bot 
 **Complete end-to-end feature development workflow**
 
 - Step-by-step guide from tests to production
-- Uses all 6 specialized agents
+- Uses all 5 specialized agents
 - Example: "Create Todo" feature
 - RED-GREEN-REFACTOR methodology
 - Hexagonal architecture enforcement
@@ -51,7 +51,7 @@ This directory contains detailed workflows for developing the Telegram Todo Bot 
 ### [04-deployment-workflow.md](./04-deployment-workflow.md)
 **Complete deployment process to Railway**
 
-- Local → Staging → Production
+- Local -> Staging -> Production
 - Environment configuration
 - CI/CD pipeline setup
 - Health checks and monitoring
@@ -88,8 +88,8 @@ go mod init github.com/yourusername/golang-todolist
 # Start with Test-First Agent
 @test-first-agent "Write BDD tests for Create Todo via REST API"
 
-# 3. Continue through all 7 steps:
-#    Test-First → Domain Logic → Database → API → AI/NLP → Infrastructure → Integration
+# 3. Continue through all 6 steps:
+#    Test-First -> Domain Logic -> Database -> API -> Infrastructure -> Integration
 ```
 
 ---
@@ -98,7 +98,7 @@ go mod init github.com/yourusername/golang-todolist
 
 | Situation | Workflow | Agent(s) |
 |-----------|----------|----------|
-| New feature needed | 01-feature-implementation | All 6 agents |
+| New feature needed | 01-feature-implementation | All 5 agents |
 | Bug reported | 02-bug-fix-workflow | Test-First + relevant agent |
 | Code smells detected | 03-refactoring-workflow | Domain Logic + Test-First |
 | Ready to deploy | 04-deployment-workflow | Infrastructure |
@@ -145,23 +145,11 @@ go mod init github.com/yourusername/golang-todolist
 
 ### API Adapter Agent
 - Implement REST API (Echo)
-- Implement Telegram bot
 - Handle authentication (JWT)
 - Map DTOs to domain models
 - Error handling and status codes
 
-**Skills**: echo-framework, telebot, rest-api/design, rest-api/versioning, authentication/jwt
-
----
-
-### AI/NLP Agent
-- Integrate Perplexity API
-- Parse natural language
-- Extract intents and entities
-- Support multiple languages
-- Prompt engineering
-
-**Skills**: perplexity-api, intent-classification, entity-extraction, multilingual, date-parsing, prompt-engineering
+**Skills**: echo-framework, rest-api/design, rest-api/versioning, authentication/jwt
 
 ---
 
@@ -180,12 +168,12 @@ go mod init github.com/yourusername/golang-todolist
 
 ### 1. Test-First Always
 ```
-Write test → Test fails (RED) → Implement → Test passes (GREEN) → Refactor
+Write test -> Test fails (RED) -> Implement -> Test passes (GREEN) -> Refactor
 ```
 
 ### 2. Hexagonal Architecture
 ```
-Domain (core) ← Ports (interfaces) ← Adapters (infrastructure)
+Domain (core) <- Ports (interfaces) <- Adapters (infrastructure)
 ```
 - Domain never imports infrastructure
 - Use dependency injection
@@ -198,7 +186,7 @@ Domain (core) ← Ports (interfaces) ← Adapters (infrastructure)
 
 ### 4. Continuous Integration
 ```
-Every commit → Tests → Lint → Build → Deploy (if main)
+Every commit -> Tests -> Lint -> Build -> Deploy (if main)
 ```
 
 ---
@@ -207,67 +195,56 @@ Every commit → Tests → Lint → Build → Deploy (if main)
 
 ### Feature: Create Todo via REST API
 
-**Step 1: Test-First Agent (30 min)**
+**Step 1: Test-First Agent**
 ```bash
 @test-first-agent "Write BDD tests for Create Todo"
 ```
 - Creates `features/todo_create.feature`
 - Creates `test/bdd/todo_create_steps_test.go`
 - Creates `test/unit/domain/todo_service_test.go`
-- ❌ All tests FAIL (RED)
+- All tests FAIL (RED)
 
-**Step 2: Domain Logic Agent (45 min)**
+**Step 2: Domain Logic Agent**
 ```bash
 @domain-logic-agent "Implement TodoService to pass tests"
 ```
 - Creates `internal/domain/entity/todo.go`
 - Creates `internal/domain/port/output/todo_repository.go`
 - Creates `internal/domain/service/todo_service.go`
-- ✅ All tests PASS (GREEN)
+- All tests PASS (GREEN)
 
-**Step 3: Database Agent (30 min)**
+**Step 3: Database Agent**
 ```bash
 @database-agent "Create PostgreSQL schema with RLS"
 ```
 - Creates `migrations/001_initial_schema.sql`
 - Creates `internal/adapter/driven/postgres/todo_repo.go`
-- ✅ Integration tests pass
+- Integration tests pass
 
-**Step 4: API Adapter Agent (45 min)**
+**Step 4: API Adapter Agent**
 ```bash
-@api-adapter-agent "Implement REST API and Telegram bot"
+@api-adapter-agent "Implement REST API"
 ```
 - Creates `internal/adapter/driving/http/handlers.go`
-- Creates `internal/adapter/driving/telegram/bot.go`
-- ✅ API endpoint works
+- API endpoint works
 
-**Step 5: AI/NLP Agent (30 min)**
-```bash
-@ai-nlp-agent "Implement intent parsing"
-```
-- Creates `internal/adapter/driven/perplexity/client.go`
-- Creates `internal/domain/service/intent_service.go`
-- ✅ Natural language works
-
-**Step 6: Infrastructure Agent (30 min)**
+**Step 5: Infrastructure Agent**
 ```bash
 @infrastructure-agent "Setup CI/CD and deployment"
 ```
 - Creates `.github/workflows/ci.yml`
 - Creates `Dockerfile`
 - Creates `railway.toml`
-- ✅ Deployed to Railway
+- Deployed to Railway
 
-**Step 7: Integration Testing (20 min)**
+**Step 6: Integration Testing**
 ```bash
 # Manual verification
 make test
 make run
-# Test API, bot, database
+# Test API, database
 ```
-- ✅ All systems working
-
-**Total Time**: ~3.5 hours for complete feature from tests to production
+- All systems working
 
 ---
 
@@ -298,34 +275,34 @@ make run
 
 ### Pattern 1: Test-Driven Feature
 ```
-Test-First Agent (RED) 
-  → Domain Logic Agent (GREEN)
-  → Database Agent (persistence)
-  → API Adapter Agent (interface)
-  → Infrastructure Agent (deploy)
+Test-First Agent (RED)
+  -> Domain Logic Agent (GREEN)
+  -> Database Agent (persistence)
+  -> API Adapter Agent (interface)
+  -> Infrastructure Agent (deploy)
 ```
 
 ### Pattern 2: Bug Fix
 ```
 Test-First Agent (reproduce)
-  → Relevant Agent (fix)
-  → Test-First Agent (regression test)
+  -> Relevant Agent (fix)
+  -> Test-First Agent (regression test)
 ```
 
 ### Pattern 3: Refactoring
 ```
 Test-First Agent (verify coverage)
-  → Domain Logic Agent (refactor)
-  → Test-First Agent (verify tests still pass)
+  -> Domain Logic Agent (refactor)
+  -> Test-First Agent (verify tests still pass)
 ```
 
 ### Pattern 4: Deploy
 ```
 Infrastructure Agent (prepare)
-  → Deploy to Staging
-  → Test
-  → Deploy to Production
-  → Monitor
+  -> Deploy to Staging
+  -> Test
+  -> Deploy to Production
+  -> Monitor
 ```
 
 ---
@@ -346,7 +323,7 @@ Infrastructure Agent (prepare)
 - `.factory/README.md` - Quick start guide
 - `.factory/WORKFLOW_GUIDE.md` - Overview of workflows
 - `.factory/AGENT_COORDINATION.md` - Agent communication
-- `.factory/skills/` - 35 complete skill references
+- `.factory/skills/` - Skill references
 
 ### Architecture
 - `docs/18-multi-agent-architecture.md` - System design
@@ -380,4 +357,4 @@ These workflows are living documents. If you find issues or have suggestions:
 
 **Remember**: These workflows are designed to ensure consistency, quality, and maintainability. Following them prevents common mistakes and ensures all agents work together effectively.
 
-Happy coding! 🚀
+Happy coding!

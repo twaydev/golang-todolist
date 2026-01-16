@@ -1,0 +1,132 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: todolist-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: todolist
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d todolist"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - todolist-network
+
+  migrate:
+    image: postgres:16-alpine
+    container_name: todolist-migrate
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./app/migrations:/migrations:ro
+    entrypoint: >
+      sh -c "
+        for f in /migrations/*.up.sql; do
+          echo \"Running migration: $$f\";
+          PGPASSWORD=postgres psql -h db -U postgres -d todolist -f $$f;
+        done
+      "
+    networks:
+      - todolist-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: todolist-api
+    environment:
+      PORT: 8080
+      ENV: development
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/todolist?sslmode=disable
+      JWT_SECRET: dev-secret-key-minimum-32-characters-long
+      JWT_EXPIRY_HOURS: 24
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - todolist-network
+
+  test:
+    image: curlimages/curl:latest
+    container_name: todolist-test
+    depends_on:
+      api:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo '=== Testing Health Endpoint ==='
+        curl -s http://api:8080/health
+        echo ''
+        echo ' [PASS]'
+
+        echo '=== Testing Register Endpoint ==='
+        REGISTER_RESPONSE=$$(curl -s -X POST http://api:8080/auth/register -H 'Content-Type: application/json' -d '{"email":"test@example.com","password":"password123"}')
+        echo "$$REGISTER_RESPONSE"
+        echo "$$REGISTER_RESPONSE" | grep -q 'id' && echo ' [PASS]'
+
+        echo '=== Testing Login Endpoint ==='
+        LOGIN_RESPONSE=$$(curl -s -X POST http://api:8080/auth/login -H 'Content-Type: application/json' -d '{"email":"test@example.com","password":"password123"}')
+        echo "$$LOGIN_RESPONSE"
+        TOKEN=$$(echo "$$LOGIN_RESPONSE" | sed 's/.*"token":"\([^"]*\)".*/\1/')
+        echo "Token: $$TOKEN"
+        [ -n "$$TOKEN" ] && echo ' [PASS]'
+
+        echo '=== Testing Protected Route ==='
+        ME_RESPONSE=$$(curl -s http://api:8080/api/v1/me -H "Authorization: Bearer $$TOKEN")
+        echo "$$ME_RESPONSE"
+        echo "$$ME_RESPONSE" | grep -q 'test@example.com' && echo ' [PASS]'
+
+        echo ''
+        echo '==============================='
+        echo '  ALL TESTS PASSED!'
+        echo '==============================='
+    networks:
+      - todolist-network
+
+  # BDD Test Runner - runs Go BDD tests with godog
+  test-bdd:
+    image: golang:1.23-alpine
+    container_name: todolist-test-bdd
+    working_dir: /app
+    volumes:
+      - .:/app
+      - go-mod-cache:/go/pkg/mod
+    environment:
+      CGO_ENABLED: 0
+      GOTOOLCHAIN: auto
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo '=== Installing dependencies ==='
+        go mod download
+        echo ''
+        echo '=== Running BDD Tests ==='
+        go test ./app/test/bdd/... -v
+        echo ''
+        echo '=== BDD Tests Complete ==='
+
+networks:
+  todolist-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  go-mod-cache:

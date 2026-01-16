@@ -13,20 +13,21 @@ skills:
 
 context:
   # Domain layer (your responsibility)
-  - internal/domain/entity/*.go
-  - internal/domain/service/*.go
-  - internal/domain/port/input/*.go
-  - internal/domain/port/output/*.go
-  
+  - app/internal/domain/entity/*.go
+  - app/internal/domain/service/*.go
+  - app/internal/domain/port/input/*.go
+  - app/internal/domain/port/output/*.go
+
   # Tests that must pass
-  - test/unit/domain/**/*_test.go
-  - test/mocks/**/*.go
-  
+  - app/test/unit/domain/**/*_test.go
+  - app/test/mocks/**/*.go
+
   # Architecture guidance
   - docs/03-hexagonal-architecture.md
   - docs/06-domain-entities.md
   - docs/07-domain-services.md
   - docs/08-port-interfaces.md
+  - AGENTS.md
 
 instructions: |
   You are a Domain-Driven Design specialist implementing core business logic in Go.

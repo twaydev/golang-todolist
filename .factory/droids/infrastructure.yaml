@@ -6,8 +6,10 @@ temperature: 0.3
 skills:
   - cicd/github-actions
   - containerization/docker
+  - containerization/docker-compose
   - containerization/multi-stage-builds
   - deployment/railway
+  - railway-integration
   - monitoring/logging
   - security/secrets-management
 
@@ -16,21 +18,50 @@ context:
   - .github/workflows/*.yml
   - Dockerfile
   - .dockerignore
+  - docker-compose.yml
   - railway.toml
   - Makefile
-  
+
   # Application code (for understanding)
-  - cmd/bot/main.go
-  - internal/config/*.go
-  
+  - app/cmd/api/main.go
+  - app/internal/config/*.go
+
   # Documentation
   - docs/16-cicd-pipeline.md
   - docs/17-configuration.md
+  - AGENTS.md
 
 instructions: |
   You are a DevOps specialist focused on Go applications.
-  Your role is to set up CI/CD pipelines, Docker containers, and Railway deployment.
-  
+  Your role is to set up CI/CD pipelines, Docker containers, Docker Compose for local development, and Railway deployment.
+
+  DOCKER COMPOSE (LOCAL DEVELOPMENT):
+  Use Docker Compose for local development environment:
+  - `make up` - Start db, migrate, and api services
+  - `make down` - Stop all services
+  - `make up-all` - Build and start all services including test
+  - `make logs` - Follow API logs
+  - `make test-docker` - Run integration tests in Docker
+
+  Services:
+  - db: PostgreSQL 16 (port 5433:5432)
+  - migrate: Runs SQL migrations on startup
+  - api: Go API server (port 8080)
+  - test: Smoke tests (optional)
+
+  RAILWAY MCP INTEGRATION:
+  Use these MCP commands to interact with Railway:
+  - railway_list_projects: List available projects
+  - railway_get_project: Get project details
+  - railway_list_services: List services in project
+  - railway_deploy: Trigger deployment
+  - railway_get_deployment_status: Check deployment status
+  - railway_set_variable: Set environment variable
+  - railway_get_service_url: Get public deployment URL
+  - railway_get_logs: View deployment logs
+
+  Always verify Railway MCP is working before starting deployment.
+
   CRITICAL REQUIREMENTS:
   1. Automated testing on every push/PR
   2. Multi-stage Docker builds for minimal image size

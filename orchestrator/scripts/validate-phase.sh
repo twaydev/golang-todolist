@@ -19,7 +19,7 @@ case $PHASE in
     echo "Phase 1: Validating RED state (tests should fail)"
     
     # Run tests and capture output
-    go test ./test/... -v > /tmp/test-output.txt 2>&1 || true
+    go test ./app/test/... -v > /tmp/test-output.txt 2>&1 || true
     
     # Check if tests failed
     if grep -q "FAIL" /tmp/test-output.txt; then
@@ -39,7 +39,7 @@ case $PHASE in
     echo "Phase 2: Validating GREEN state (tests should pass)"
     
     # Run unit tests for domain layer
-    if go test ./test/unit/domain/... -v; then
+    if go test ./app/test/unit/domain/... -v; then
       echo "✅ Phase 2 VALID: Tests are GREEN (passing)"
       exit 0
     else
@@ -53,7 +53,7 @@ case $PHASE in
     echo "Phase 3: Validating integration tests"
     
     # Run integration tests
-    if go test ./test/integration/... -v; then
+    if go test ./app/test/integration/... -v; then
       echo "✅ Phase 3 VALID: Integration tests pass"
       exit 0
     else

@@ -4,7 +4,7 @@
 # of features into agent-specific tasks.
 
 decomposition_patterns:
-  
+
   # Full feature with all layers
   full_feature:
     description: Complete feature affecting all layers
@@ -20,7 +20,7 @@ decomposition_patterns:
           - Write unit test stubs (test/unit/domain/*_test.go)
           - Verify RED state
         output: All tests FAIL (RED)
-        
+
       - phase: 2
         name: Implementation
         parallel: true
@@ -38,24 +38,17 @@ decomposition_patterns:
             - Enable RLS policies
             - Implement repositories (internal/adapter/driven/postgres/*_repo.go)
         output: All tests PASS (GREEN)
-        
+
       - phase: 3
         name: Adapters
-        parallel: true
-        agents:
-          - api-adapter-agent
-          - ai-nlp-agent
+        sequential: true
+        agent: api-adapter-agent
         tasks:
-          api-adapter-agent:
-            - Implement REST API (internal/adapter/driving/http/*.go)
-            - Implement Telegram bot (internal/adapter/driving/telegram/*.go)
-            - Create DTOs and validation
-          ai-nlp-agent:
-            - Update Perplexity client (internal/adapter/driven/perplexity/*.go)
-            - Update intent service (internal/domain/service/intent_service.go)
-            - Update prompts (prompts/*.txt)
+          - Implement REST API (internal/adapter/driving/http/*.go)
+          - Create DTOs and validation
+          - Write integration tests
         output: Integration tests PASS
-        
+
       - phase: 4
         name: Infrastructure
         sequential: true
@@ -67,12 +60,10 @@ decomposition_patterns:
           - Verify health checks
         output: Deployment SUCCESS, health check PASS
 
-  # API-only feature (no NLP)
+  # API-only feature
   api_feature:
-    description: REST API feature without natural language support
+    description: REST API feature
     example: "Export Todos to CSV"
-    skip_agents:
-      - ai-nlp-agent
     phases:
       - phase: 1
         agent: test-first-agent
@@ -90,27 +81,9 @@ decomposition_patterns:
     skip_agents:
       - test-first-agent  # May not need new tests
       - api-adapter-agent
-      - ai-nlp-agent
     phases:
       - phase: 2
         agents: [database-agent]
-      - phase: 4
-        agent: infrastructure-agent
-
-  # NLP enhancement
-  nlp_feature:
-    description: Natural language processing improvement
-    example: "Parse relative dates in Vietnamese"
-    skip_agents:
-      - database-agent
-      - api-adapter-agent
-    phases:
-      - phase: 1
-        agent: test-first-agent
-      - phase: 2
-        agents: [domain-logic-agent]  # May need intent schema updates
-      - phase: 3
-        agents: [ai-nlp-agent]
       - phase: 4
         agent: infrastructure-agent
 
@@ -123,7 +96,6 @@ decomposition_patterns:
       - domain-logic-agent
       - database-agent
       - api-adapter-agent
-      - ai-nlp-agent
     phases:
       - phase: 4
         agent: infrastructure-agent
@@ -171,29 +143,80 @@ decomposition_patterns:
       - phase: 4
         agent: infrastructure-agent
 
+  # Project initialization
+  project_init:
+    description: Initialize new project with full stack
+    example: "Initialize Golang TodoList project"
+    workflow: .factory/workflows/00-project-init.md
+    phases:
+      - phase: 0
+        name: Project Setup
+        agent: orchestrator
+        tasks:
+          - Create Linear epic for project initialization
+          - Create project structure
+          - Setup go.mod
+          - Configure environment files
+      - phase: 1
+        name: Foundation
+        agent: infrastructure-agent
+        tasks:
+          - Create Dockerfile
+          - Create Makefile
+          - Setup GitHub Actions CI/CD
+          - Configure Railway
+      - phase: 2
+        name: Core Implementation
+        parallel: true
+        agents:
+          - domain-logic-agent
+          - database-agent
+        tasks:
+          domain-logic-agent:
+            - Create base entity structures
+            - Define core port interfaces
+            - Implement initial services
+          database-agent:
+            - Create initial migration
+            - Setup connection pool
+            - Implement base repository
+      - phase: 3
+        name: API Foundation
+        agent: api-adapter-agent
+        tasks:
+          - Setup Echo server
+          - Add health check endpoint
+          - Configure middleware
+          - Add initial routes
+      - phase: 4
+        name: Verification
+        agent: infrastructure-agent
+        tasks:
+          - Run all tests
+          - Build Docker image
+          - Deploy to Railway
+          - Verify health check
+
 # Decision tree for automatic decomposition
 decision_tree:
-  - condition: "feature mentions 'natural language' OR 'NLP' OR 'intent'"
-    pattern: full_feature
-    
-  - condition: "feature mentions 'REST API' OR 'endpoint' AND NOT 'bot'"
+  - condition: "feature mentions 'init' OR 'initialize' OR 'setup project'"
+    pattern: project_init
+
+  - condition: "feature mentions 'REST API' OR 'endpoint'"
     pattern: api_feature
-    
+
   - condition: "feature mentions 'schema' OR 'migration' OR 'index' OR 'database'"
     pattern: schema_change
-    
-  - condition: "feature mentions 'parse' OR 'language' OR 'Vietnamese'"
-    pattern: nlp_feature
-    
+
   - condition: "feature mentions 'CI/CD' OR 'deploy' OR 'Docker'"
     pattern: infrastructure_change
-    
+
   - condition: "feature mentions 'bug' OR 'fix' OR 'error'"
     pattern: bug_fix
-    
+
   - condition: "feature mentions 'refactor' OR 'improve code'"
     pattern: refactoring
-    
+
   - condition: default
     pattern: full_feature
 
@@ -201,22 +224,18 @@ decision_tree:
 dependencies:
   domain:
     depends_on: []
-    depended_by: [database, adapters, nlp]
-    
+    depended_by: [database, adapters]
+
   database:
     depends_on: [domain]  # Needs entity structure
     depended_by: []
-    
+
   adapters:
     depends_on: [domain]  # Needs service interfaces
     depended_by: []
-    
-  nlp:
-    depends_on: [domain]  # Needs intent schema
-    depended_by: []
-    
+
   infrastructure:
-    depends_on: [domain, database, adapters, nlp]  # Needs everything
+    depends_on: [domain, database, adapters]  # Needs everything
     depended_by: []
 
 # Estimated durations (in minutes)
@@ -225,15 +244,14 @@ time_estimates:
   domain-logic-agent: 45
   database-agent: 45
   api-adapter-agent: 45
-  ai-nlp-agent: 45
   infrastructure-agent: 30
-  
+
   # Parallel phases take max(agent times)
   phase_1: 30  # Sequential
   phase_2: 45  # max(domain:45, database:45)
-  phase_3: 45  # max(adapter:45, nlp:45)
+  phase_3: 45  # adapter only
   phase_4: 30  # Sequential
-  
+
   total_full_feature: 150  # 2.5 hours
 
 # Validation checkpoints
@@ -241,22 +259,22 @@ checkpoints:
   phase_1:
     script: orchestrator/scripts/validate-phase.sh 1
     expect: Tests FAIL (RED state)
-    
+
   phase_2:
     script: orchestrator/scripts/validate-phase.sh 2
     expect: Tests PASS (GREEN state)
-    
+
   phase_3:
     script: orchestrator/scripts/validate-phase.sh 3
     expect: Integration tests PASS
-    
+
   phase_4:
     script: orchestrator/scripts/validate-phase.sh 4
     expect: Health check returns 200 OK
 
 # Communication signals
 signals:
-  completion: "✅ {agent} complete"
-  blocker: "⚠️ BLOCKED"
-  question: "❓ Question for @orchestrator"
+  completion: "{agent} complete"
+  blocker: "BLOCKED"
+  question: "Question for @orchestrator"
   ready_for_next: "Ready for {next_phase}"

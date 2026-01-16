@@ -14,20 +14,20 @@ Implement domain entities, services, and port interfaces following hexagonal arc
 - Failing unit tests available in `test/unit/domain/`
 
 ## Tasks
-1. **Define Domain Entities** (`internal/domain/entity/{entity}.go`)
+1. **Define Domain Entities** (`app/internal/domain/entity/{entity}.go`)
    - Struct with business-relevant fields
    - Validate() method (business rule validation)
    - State transition methods (e.g., MarkComplete())
    - Business logic methods (e.g., IsOverdue())
    - Document business rules in comments
 
-2. **Define Port Interfaces** (`internal/domain/port/output/{port}.go`)
+2. **Define Port Interfaces** (`app/internal/domain/port/output/{port}.go`)
    - Repository interfaces (Create, Update, Delete, List, etc.)
    - External service interfaces (if needed)
    - Use context.Context for cancellation
    - Return domain entities, not DTOs
 
-3. **Implement Application Services** (`internal/domain/service/{service}.go`)
+3. **Implement Application Services** (`app/internal/domain/service/{service}.go`)
    - Constructor with dependency injection
    - Orchestrate business logic
    - Call repositories through port interfaces
@@ -41,7 +41,7 @@ Implement domain entities, services, and port interfaces following hexagonal arc
    ```
 
 ## Architecture Rules
-- ❌ NO imports from `internal/adapter/`
+- ❌ NO imports from `app/internal/adapter/`
 - ❌ NO imports from infrastructure (postgres, http, telebot)
 - ✅ ONLY stdlib and other domain packages
 - ✅ All external dependencies via interfaces (ports)
@@ -54,10 +54,10 @@ Implement domain entities, services, and port interfaces following hexagonal arc
 - solid-principles
 
 ## Output
-- `internal/domain/entity/{entity}.go` ✅
-- `internal/domain/entity/{value_objects}.go` ✅
-- `internal/domain/port/output/{repository}.go` ✅
-- `internal/domain/service/{service}.go` ✅
+- `app/internal/domain/entity/{entity}.go` ✅
+- `app/internal/domain/entity/{value_objects}.go` ✅
+- `app/internal/domain/port/output/{repository}.go` ✅
+- `app/internal/domain/service/{service}.go` ✅
 - All unit tests PASS (GREEN) ✅
 
 ## Completion Signal
@@ -66,9 +66,9 @@ Post to Linear:
 ✅ domain-logic-agent complete
 
 Files created:
-- internal/domain/entity/{entity}.go
-- internal/domain/port/output/{repository}.go
-- internal/domain/service/{service}.go
+- app/internal/domain/entity/{entity}.go
+- app/internal/domain/port/output/{repository}.go
+- app/internal/domain/service/{service}.go
 
 Test status: All PASSING (GREEN) ✅
 

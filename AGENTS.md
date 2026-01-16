@@ -1,404 +1,317 @@
 # Agent Orchestration Rules
 
-## Workflow Phases
+This document defines the rules and protocols for the multi-agent orchestration system.
 
-### Phase 1: Test-First (Sequential) - RED State
-**Duration**: ~30 minutes  
-**Agent**: test-first-agent  
-**Linear Label**: `agent:test-first`, `phase:1-red`
+## Pre-flight: MCP Integration Check
 
-**Input**: 
-- User story from Linear epic
-- Requirements and acceptance criteria
+**CRITICAL:** Before starting any workflow, verify all MCP integrations are working.
 
-**Tasks**:
-1. Write Gherkin feature file (features/*.feature)
-2. Create step definitions (test/bdd/*_steps_test.go)
-3. Write unit test stubs (test/unit/domain/*_test.go)
-4. Run tests: `go test ./test/... -v`
-
-**Output**: 
-- All tests execute and FAIL (RED state)
-- Comment on Linear issue: "✅ Tests RED. Files: {...}"
-
-**Checkpoint**: 
 ```bash
-orchestrator/scripts/validate-phase.sh 1
-# Expect: Tests fail as expected
+./orchestrator/scripts/check-mcp.sh
 ```
 
-**Proceed to Phase 2**: When checkpoint passes
+### Required MCP Servers
+
+| MCP Server | Purpose | Commands |
+|------------|---------|----------|
+| **Linear** | Task tracking | `linear_get_teams`, `linear_create_issue`, `linear_update_issue` |
+| **Supabase** | Database ops | `supabase_list_projects`, `supabase_execute_sql` |
+| **Railway** | Deployment | `railway_list_projects`, `railway_deploy`, `railway_set_variable` |
+
+### Verification Sequence
+
+1. **Linear MCP**: `linear_get_teams` → should return team list
+2. **Supabase MCP**: `supabase_list_projects` → should return project info
+3. **Railway MCP**: `railway_list_projects` → should return project list
+
+If any MCP fails, check environment variables:
+- `LINEAR_API_KEY`
+- `SUPABASE_URL`, `SUPABASE_KEY`
+- `RAILWAY_TOKEN`
 
 ---
 
-### Phase 2: Implementation (Parallel) - GREEN State
-**Duration**: ~45-60 minutes  
-**Agents**: domain-logic-agent + database-agent  
-**Linear Labels**: `agent:domain-logic`, `agent:database`, `phase:2-green`
+## Agent Architecture
 
-#### Domain Logic Agent Task:
-**Input**: Failing tests from Phase 1
+### Orchestrator Agent
+- **Role**: Coordinates all agents via Linear issues
+- **Model**: claude-3.5-sonnet
+- **Responsibilities**:
+  - Parse user stories
+  - Create Linear epics and tasks
+  - Invoke agents in correct order
+  - Validate checkpoints between phases
+  - Report progress to Linear
 
-**Tasks**:
-1. Define entities (internal/domain/entity/*.go)
-2. Define port interfaces (internal/domain/port/output/*.go)
-3. Implement services (internal/domain/service/*.go)
-4. Run tests: `go test ./test/unit/domain/... -v`
+### Specialized Agents
 
-**Output**: All unit tests PASS (GREEN state)
-
-#### Database Agent Task (Parallel):
-**Input**: Domain entities structure
-
-**Tasks**:
-1. Create migrations (migrations/*.sql)
-2. Implement repositories (internal/adapter/driven/postgres/*_repo.go)
-3. Enable RLS policies
-4. Test migrations: `migrate up && migrate down`
-
-**Output**: Schema created, repos implemented
-
-**Checkpoint**:
-```bash
-orchestrator/scripts/validate-phase.sh 2
-# Expect: All unit tests pass
-```
-
-**Proceed to Phase 3**: When both agents complete AND checkpoint passes
+| Agent | Phase | Focus |
+|-------|-------|-------|
+| test-first-agent | 1 | Write failing tests (RED) |
+| domain-logic-agent | 2 | Implement entities & services |
+| database-agent | 2 | Create schemas & repositories |
+| api-adapter-agent | 3 | Build REST API endpoints |
+| infrastructure-agent | 4 | Deploy to production |
 
 ---
 
-### Phase 3: Adapters (Parallel)
-**Duration**: ~45-60 minutes  
-**Agents**: api-adapter-agent + ai-nlp-agent  
-**Linear Labels**: `agent:adapter`, `agent:ai-nlp`, `phase:3-adapters`
+## The 4-Phase Workflow
 
-#### API Adapter Agent Task:
-**Tasks**:
-1. Implement REST API (internal/adapter/driving/http/*.go)
-2. Implement Telegram bot (internal/adapter/driving/telegram/*.go)
-3. Create DTOs and mapping
-4. Add middleware
-
-**Output**: API endpoints and bot handlers working
-
-#### AI/NLP Agent Task (Parallel):
-**Tasks**:
-1. Implement Perplexity client (internal/adapter/driven/perplexity/*.go)
-2. Create intent service (internal/domain/service/intent_service.go)
-3. Design prompts (prompts/*.txt)
-
-**Output**: Natural language parsing working
-
-**Checkpoint**:
-```bash
-orchestrator/scripts/validate-phase.sh 3
-# Expect: Integration tests pass
+```
+Phase 1 (Sequential)     Phase 2 (Parallel)       Phase 3 (Sequential)     Phase 4 (Sequential)
+┌─────────────────┐     ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│  test-first     │────▶│  domain-logic   │─┬───▶│  api-adapter    │─────▶│  infrastructure │
+│  (RED tests)    │     │  (entities)     │ │    │  (HTTP)         │      │  (deploy)       │
+└─────────────────┘     ├─────────────────┤ │    └─────────────────┘      └─────────────────┘
+                        │  database       │─┘
+                        │  (schema)       │
+                        └─────────────────┘
 ```
 
-**Proceed to Phase 4**: When both complete AND checkpoint passes
+### Phase Rules
+
+1. **Phase 1 must complete before Phase 2 starts**
+2. **Phase 2 agents work in parallel** (domain + database)
+3. **Phase 2 must complete before Phase 3 starts**
+4. **Phase 3 must complete before Phase 4 starts**
+5. **Each phase has validation checkpoint**
 
 ---
 
-### Phase 4: Infrastructure (Sequential)
-**Duration**: ~30 minutes  
-**Agent**: infrastructure-agent  
-**Linear Label**: `agent:infrastructure`, `phase:4-deploy`
+## Linear Integration Protocol
 
-**Tasks**:
-1. Update CI/CD if needed (.github/workflows/*.yml)
-2. Update Dockerfile if needed
-3. Deploy to Railway: `railway up`
-4. Verify health check: `curl https://app.railway.app/health`
-
-**Checkpoint**:
-```bash
-orchestrator/scripts/validate-phase.sh 4
-# Expect: Health check returns 200 OK
+### Epic Structure
+```
+Title: [Feature] {feature_name}
+Labels: type:feature
+Status: In Progress → Done
 ```
 
-**Mark epic Done**: When checkpoint passes
+### Task Structure
+```
+Title: [{Phase}] {task_description}
+Labels: agent:{agent_name}, phase:{phase_number}
+Parent: Epic
+```
+
+### Agent Labels
+- `agent:test-first`
+- `agent:domain-logic`
+- `agent:database`
+- `agent:adapter`
+- `agent:infrastructure`
+
+### Phase Labels
+- `phase:1-red`
+- `phase:2-green`
+- `phase:3-adapters`
+- `phase:4-deploy`
 
 ---
 
-## Agent Communication Protocol
+## Communication Protocol
 
 ### Completion Signal
-Agents post to Linear issue:
 ```
-✅ {AgentName} complete
+{agent_name} complete
 
 Files changed:
-- path/to/file1.go
-- path/to/file2.go
+- path/to/file.go
 
-Tests:
-- Unit: ✅ 15 passed
-- Integration: ✅ 3 passed
+Tests: X passed
 
 Ready for next phase.
 ```
 
 ### Blocker Signal
 ```
-⚠️ BLOCKED
+BLOCKED
 
-Reason: Missing interface definition for XYZ
-Needs: @orchestrator to clarify requirements
+Reason: {description}
+Needs: @orchestrator clarification
 
-Cannot proceed until resolved.
+Cannot proceed.
 ```
 
 ### Question Signal
 ```
-❓ Question for @orchestrator
+Question for @orchestrator
 
-Which priority enum values to support?
-Options: low/medium/high or p1/p2/p3/p4?
+{question}
+
+Options: A, B, or C?
 
 Waiting for guidance.
 ```
 
-## Orchestrator Responses
+---
 
-### To Blockers
-1. Read blocker reason
-2. Clarify requirements
-3. Update Linear issue description
-4. Notify agent: "Updated requirements, please proceed"
+## Checkpoint Validation
 
-### To Questions
-1. Review question
-2. Check existing docs/architecture decisions
-3. Provide clear answer in Linear comment
-4. Update AGENTS.md if it's a common question
+Run validation scripts between phases:
 
-## Task Decomposition Rules
-
-### Feature Type: CRUD Endpoint
-**Affects**: Domain, Database, API Adapter  
-**Skip**: AI/NLP (unless natural language needed)  
-**Phases**: 1 → 2 (Domain + DB) → 3 (API only) → 4
-
-### Feature Type: Natural Language Feature
-**Affects**: All agents  
-**Phases**: 1 → 2 → 3 (API + NLP) → 4
-
-### Feature Type: Schema Change
-**Affects**: Database, Domain  
-**Phases**: 1 → 2 (Domain + DB) → (skip 3) → 4
-
-### Feature Type: Deployment Configuration
-**Affects**: Infrastructure only  
-**Phases**: 4 only (no tests needed)
-
-## Checkpoint Validation Scripts
-
-Located in: `orchestrator/scripts/validate-phase.sh`
-
-Usage: `./validate-phase.sh <phase_number>`
-
-### Phase 1: RED state validation
 ```bash
-#!/bin/bash
-# Expect tests to fail
-go test ./test/... -v > /tmp/test-output.txt 2>&1
-if grep -q "FAIL" /tmp/test-output.txt; then
-  echo "✅ Phase 1 valid: Tests are RED"
-  exit 0
-else
-  echo "❌ Phase 1 invalid: Tests should fail"
-  exit 1
-fi
+# After Phase 1 - expect test failures
+./orchestrator/scripts/validate-phase.sh 1
+
+# After Phase 2 - expect test passes
+./orchestrator/scripts/validate-phase.sh 2
+
+# After Phase 3 - expect integration pass
+./orchestrator/scripts/validate-phase.sh 3
+
+# After Phase 4 - expect health check pass
+./orchestrator/scripts/validate-phase.sh 4
 ```
 
-### Phase 2: GREEN state validation
+### Validation Rules
+- **Do NOT proceed to next phase if validation fails**
+- Create sub-task for fix if blocked
+- Re-run validation after fix
+- Update Linear issue with validation results
+
+---
+
+## MCP Command Reference
+
+### Linear MCP
+| Command | Description |
+|---------|-------------|
+| `linear_get_teams` | List available teams |
+| `linear_get_labels` | List issue labels |
+| `linear_create_issue` | Create new issue |
+| `linear_update_issue` | Update issue status |
+| `linear_add_comment` | Add comment to issue |
+| `linear_get_issue` | Get issue details |
+
+### Supabase MCP
+| Command | Description |
+|---------|-------------|
+| `supabase_list_projects` | List all projects |
+| `supabase_get_project` | Get project details |
+| `supabase_list_tables` | List database tables |
+| `supabase_execute_sql` | Execute SQL query |
+| `supabase_get_connection_string` | Get DB connection URL |
+
+### Railway MCP
+| Command | Description |
+|---------|-------------|
+| `railway_list_projects` | List all projects |
+| `railway_get_project` | Get project details |
+| `railway_list_services` | List services |
+| `railway_deploy` | Trigger deployment |
+| `railway_get_deployment_status` | Check deployment status |
+| `railway_set_variable` | Set environment variable |
+| `railway_get_service_url` | Get public URL |
+
+---
+
+## Error Handling
+
+### MCP Connection Errors
+1. Check environment variables are set
+2. Verify API keys are valid
+3. Check service status (Linear/Supabase/Railway dashboards)
+4. Restart MCP servers if needed
+
+### Phase Failures
+1. Read validation output
+2. Identify failing tests/checks
+3. Create sub-task in Linear
+4. Fix and re-validate
+5. Continue only when passing
+
+### Deployment Failures
+1. Check Railway logs via MCP
+2. Verify environment variables
+3. Check health endpoint
+4. Review build output
+
+---
+
+## Local Development with Docker Compose
+
+For local development, use Docker Compose to run the full stack (PostgreSQL, migrations, API):
+
+### Quick Start
 ```bash
-#!/bin/bash
-# Expect tests to pass
-go test ./test/unit/domain/... -v
-if [ $? -eq 0 ]; then
-  echo "✅ Phase 2 valid: Tests are GREEN"
-  exit 0
-else
-  echo "❌ Phase 2 invalid: Tests should pass"
-  exit 1
-fi
+# Start all services (db, migrations, api)
+make up
+
+# View logs
+make logs
+
+# Stop all services
+make down
 ```
 
-### Phase 3: Integration validation
+### Available Commands
+| Command | Description |
+|---------|-------------|
+| `make up` | Start db, migrate, and api services |
+| `make down` | Stop all services |
+| `make up-all` | Build and start all services including test |
+| `make up-db` | Start only PostgreSQL |
+| `make logs` | Follow API logs |
+| `make logs-db` | Follow database logs |
+| `make ps` | Show running containers |
+| `make test-docker` | Run integration tests in Docker |
+| `make restart` | Restart all services |
+
+### Services
+| Service | Port | Description |
+|---------|------|-------------|
+| `db` | 5433:5432 | PostgreSQL 16 with health check |
+| `migrate` | - | Runs SQL migrations on startup |
+| `api` | 8080:8080 | Go API server |
+| `test` | - | Smoke tests (optional) |
+
+### Testing Locally
 ```bash
-#!/bin/bash
-# Expect integration tests to pass
-go test ./test/integration/... -v
-if [ $? -eq 0 ]; then
-  echo "✅ Phase 3 valid: Integration tests pass"
-  exit 0
-else
-  echo "❌ Phase 3 invalid: Integration tests failing"
-  exit 1
-fi
+# Start services
+make up
+
+# Wait for healthy status
+make ps
+
+# Test endpoints
+curl http://localhost:8080/health
+curl -X POST http://localhost:8080/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"password123"}'
 ```
 
-### Phase 4: Deployment validation
-```bash
-#!/bin/bash
-# Expect health check to pass
-HEALTH_URL="${RAILWAY_URL}/health"
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL")
-if [ "$STATUS" -eq 200 ]; then
-  echo "✅ Phase 4 valid: Health check passing"
-  exit 0
-else
-  echo "❌ Phase 4 invalid: Health check failing (status: $STATUS)"
-  exit 1
-fi
+---
+
+## Quick Reference
+
+### Start New Feature
+```
+1. Run MCP pre-flight check
+2. Start local environment: make up
+3. Orchestrator creates Linear epic
+4. Phase 1: test-first-agent (RED)
+5. Phase 2: domain + database (GREEN) [parallel]
+6. Phase 3: api-adapter-agent (integration)
+7. Phase 4: infrastructure-agent (deploy)
+8. Verify acceptance criteria
 ```
 
-## Linear Integration
-
-### Labels Required in Linear Workspace
+### Initialize Project
 ```
-agent:test-first
-agent:domain-logic
-agent:database
-agent:adapter
-agent:ai-nlp
-agent:infrastructure
-phase:1-red
-phase:2-green
-phase:3-adapters
-phase:4-deploy
-status:blocked
-status:in-progress
-status:review
-type:feature
+1. Run MCP pre-flight check
+2. ./orchestrator/scripts/init-project.sh
+3. Follow .factory/workflows/00-project-init.md
+4. Start local dev: make up
+5. Test API endpoints
+6. Deploy skeleton to Railway
 ```
 
-### Custom Workflow States
-```
-- Backlog
-- Ready (agent can start)
-- In Progress
-- Tests RED (Phase 1 complete)
-- Tests GREEN (Phase 2 complete)
-- Review
-- Done
-```
+---
 
-### Epic Template
-```markdown
-# [Feature] {Feature Name}
+## Resources
 
-## User Story
-As a {user type}, I want {feature} so that {benefit}.
-
-## Requirements
-- Requirement 1
-- Requirement 2
-- Requirement 3
-
-## Acceptance Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
-- [ ] Criterion 3
-
-## Technical Notes
-- Affects layers: {domain/database/api/nlp/infra}
-- Dependencies: {other epics/features}
-- Timeline: {estimated hours}
-```
-
-## Architecture Compliance
-
-### Hexagonal Architecture Rules
-1. Domain layer NEVER imports from adapters
-2. All external dependencies via interfaces (ports)
-3. Business logic only in domain entities and services
-4. Adapters only translate, never contain logic
-
-### Test-First Rules
-1. Write tests BEFORE implementation (RED state required)
-2. Make tests pass (GREEN state)
-3. Refactor for quality
-4. Never skip tests
-
-### Quality Gates
-- Phase 1 → 2: Tests must be RED
-- Phase 2 → 3: Tests must be GREEN
-- Phase 3 → 4: Integration tests must pass
-- Complete: All acceptance criteria met
-
-## Parallel Execution Guidelines
-
-### Phase 2: Domain + Database
-- Domain agent focuses on business logic
-- Database agent focuses on schema and queries
-- Both reference the same entity definitions
-- Database agent may wait for entity structure from domain
-
-### Phase 3: Adapter + AI/NLP
-- API adapter implements driving adapters (HTTP, Telegram)
-- AI/NLP agent implements driven adapter (Perplexity)
-- Both reference domain interfaces
-- No interdependencies between them
-
-## Error Recovery
-
-### If Phase Checkpoint Fails
-1. Orchestrator marks phase as "Needs Fix"
-2. Creates sub-task with specific issue
-3. Relevant agent fixes the issue
-4. Re-runs checkpoint validation
-5. Proceeds only when checkpoint passes
-
-### If Agent Reports Blocker
-1. Orchestrator reviews blocker description
-2. Provides clarification or missing information
-3. Updates Linear issue with resolution
-4. Agent resumes work
-
-### If Integration Test Fails
-1. Orchestrator identifies failing test
-2. Determines which agent's code is failing
-3. Creates fix task for that agent
-4. Re-runs integration tests after fix
-5. Proceeds when all tests pass
-
-## Monitoring and Reporting
-
-### Progress Tracking
-- Linear epic shows overall progress
-- Each issue shows phase progress
-- Comments show detailed updates
-- Labels indicate current state
-
-### Metrics to Track
-- Time per phase (actual vs estimated)
-- Number of blockers encountered
-- Checkpoint failures and retries
-- Lines of code changed per phase
-- Test coverage per phase
-
-## Best Practices
-
-### For Orchestrator
-1. Always validate checkpoints before proceeding
-2. Keep Linear issues updated with current status
-3. Document all decisions in Linear comments
-4. Handle blockers promptly
-5. Run integration tests at phase boundaries
-
-### For Specialized Agents
-1. Follow the instructions in your droid YAML
-2. Post completion signals to Linear
-3. Report blockers immediately
-4. Ask questions when requirements unclear
-5. Update Linear with files changed
-
-### For Developers
-1. Monitor Linear epic for progress
-2. Review agent comments for context
-3. Intervene only when necessary
-4. Let agents handle their specialties
-5. Provide feedback to improve process
+- **Workflows**: `.factory/workflows/`
+- **Agent Configs**: `.factory/droids/`
+- **Templates**: `orchestrator/templates/`
+- **Scripts**: `orchestrator/scripts/`
