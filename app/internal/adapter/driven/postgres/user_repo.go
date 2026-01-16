@@ -143,7 +143,7 @@ func (r *UserRepository) Delete(ctx context.Context, id string) error {
 
 // isUniqueViolation checks if the error is a unique constraint violation
 func isUniqueViolation(err error) bool {
-	return err != nil && (errors.Is(err, pgx.ErrNoRows) == false) &&
+	return err != nil && !errors.Is(err, pgx.ErrNoRows) &&
 		(err.Error() == "ERROR: duplicate key value violates unique constraint \"users_email_key\" (SQLSTATE 23505)" ||
 			containsString(err.Error(), "duplicate key") ||
 			containsString(err.Error(), "23505"))
