@@ -92,7 +92,6 @@ jobs:
           sleep 60
 
       - name: Run database migrations
-        if: ${{ secrets.DATABASE_URL != '' }}
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
@@ -155,9 +154,13 @@ jobs:
           fi
 
       - name: API smoke test
-        if: ${{ secrets.RAILWAY_PUBLIC_URL != '' }}
+        env:
+          DEPLOY_URL: ${{ secrets.RAILWAY_PUBLIC_URL }}
         run: |
-          DEPLOY_URL="${{ secrets.RAILWAY_PUBLIC_URL }}"
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "RAILWAY_PUBLIC_URL not set - skipping smoke test"
+            exit 0
+          fi
 
           echo "Testing registration endpoint..."
           REGISTER_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$DEPLOY_URL/auth/register" \
