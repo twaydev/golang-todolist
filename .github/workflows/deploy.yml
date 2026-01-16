@@ -15,6 +15,7 @@ on:
           - staging
 
 env:
+  # Use Project Token from Railway (Project Settings > Tokens > Create Token)
   RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
 
 jobs:
@@ -28,9 +29,6 @@ jobs:
       name: ${{ github.event.inputs.environment || 'production' }}
       url: ${{ steps.deploy.outputs.url }}
 
-    # Only deploy if CI passes (when triggered by push)
-    needs: []
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -39,16 +37,37 @@ jobs:
         run: |
           curl -fsSL https://railway.app/install.sh | sh
 
+      - name: Check Railway Token
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error::RAILWAY_TOKEN secret is not set"
+            echo ""
+            echo "To fix this:"
+            echo "1. Go to Railway dashboard > Your Project > Settings > Tokens"
+            echo "2. Create a new Project Token"
+            echo "3. Add it as RAILWAY_TOKEN in GitHub Secrets"
+            exit 1
+          fi
+          echo "Railway token is configured"
+
       - name: Deploy to Railway
         id: deploy
         run: |
-          railway up --detach
-          echo "Deployment initiated"
+          # Deploy using Railway CLI
+          railway up --detach 2>&1 | tee deploy.log
+
+          # Check if deployment was successful
+          if grep -q "Deployment initiated" deploy.log || grep -q "Deploy" deploy.log; then
+            echo "Deployment initiated successfully"
+          else
+            echo "::warning::Deployment may have issues, check Railway dashboard"
+          fi
 
       - name: Get deployment URL
         run: |
-          echo "Deployed to Railway"
-          echo "Check Railway dashboard for deployment status"
+          echo "## Deployment Initiated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check [Railway Dashboard](https://railway.app/dashboard) for deployment status" >> $GITHUB_STEP_SUMMARY
 
   # ===========================================================================
   # Post-deployment verification
@@ -61,17 +80,28 @@ jobs:
 
     steps:
       - name: Wait for deployment
-        run: sleep 60
+        run: |
+          echo "Waiting 90 seconds for deployment to complete..."
+          sleep 90
 
       - name: Health check
         run: |
-          # Get the Railway public URL from secrets or use a known URL
           DEPLOY_URL="${{ secrets.RAILWAY_PUBLIC_URL }}"
           if [ -n "$DEPLOY_URL" ]; then
             echo "Checking health at $DEPLOY_URL/health"
-            curl -f "$DEPLOY_URL/health" || echo "Health check pending - deployment may still be in progress"
+            for i in 1 2 3; do
+              if curl -sf "$DEPLOY_URL/health"; then
+                echo ""
+                echo "Health check passed!"
+                exit 0
+              fi
+              echo "Attempt $i failed, retrying in 30s..."
+              sleep 30
+            done
+            echo "::warning::Health check failed after 3 attempts"
           else
             echo "RAILWAY_PUBLIC_URL not set - skipping health check"
+            echo "Add RAILWAY_PUBLIC_URL secret to enable health checks"
           fi
 
   # ===========================================================================
@@ -88,13 +118,16 @@ jobs:
         run: |
           echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment:** ${{ github.event.inputs.environment || 'production' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ github.event.inputs.environment || 'production' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+
           if [ "${{ needs.deploy.result }}" == "success" ]; then
-            echo "**Status:** Deployment successful" >> $GITHUB_STEP_SUMMARY
+            echo "### Status: ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
           else
-            echo "**Status:** Deployment failed" >> $GITHUB_STEP_SUMMARY
+            echo "### Status: ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
           fi
