@@ -35,9 +35,15 @@ jobs:
         run: curl -fsSL https://railway.app/install.sh | sh
 
       - name: Deploy to Railway
+        env:
+          RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
         run: |
           echo "Deploying to Railway..."
-          railway up --detach
+          if [ -n "$RAILWAY_SERVICE" ]; then
+            railway up --detach --service "$RAILWAY_SERVICE"
+          else
+            railway up --detach
+          fi
 
           echo "## Deployment Initiated" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
