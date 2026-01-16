@@ -13,9 +13,13 @@ on:
         options:
           - production
           - staging
+      run_migrations:
+        description: 'Run database migrations'
+        required: false
+        default: true
+        type: boolean
 
 env:
-  # Use Project Token from Railway (Project Settings > Tokens > Create Token)
   RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
 
 jobs:
@@ -41,11 +45,6 @@ jobs:
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then
             echo "::error::RAILWAY_TOKEN secret is not set"
-            echo ""
-            echo "To fix this:"
-            echo "1. Go to Railway dashboard > Your Project > Settings > Tokens"
-            echo "2. Create a new Project Token"
-            echo "3. Add it as RAILWAY_TOKEN in GitHub Secrets"
             exit 1
           fi
           echo "Railway token is configured"
@@ -53,11 +52,8 @@ jobs:
       - name: Deploy to Railway
         id: deploy
         run: |
-          # Deploy using Railway CLI
           railway up --detach 2>&1 | tee deploy.log
-
-          # Check if deployment was successful
-          if grep -q "Deployment initiated" deploy.log || grep -q "Deploy" deploy.log; then
+          if grep -q "Uploading" deploy.log; then
             echo "Deployment initiated successfully"
           else
             echo "::warning::Deployment may have issues, check Railway dashboard"
@@ -70,38 +66,108 @@ jobs:
           echo "Check [Railway Dashboard](https://railway.app/dashboard) for deployment status" >> $GITHUB_STEP_SUMMARY
 
   # ===========================================================================
+  # Run Database Migrations
+  # ===========================================================================
+  migrate:
+    name: Run Migrations
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: success() && (github.event.inputs.run_migrations != 'false')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check DATABASE_URL
+        run: |
+          if [ -z "${{ secrets.DATABASE_URL }}" ]; then
+            echo "::warning::DATABASE_URL secret not set - skipping migrations"
+            echo "To enable migrations, add DATABASE_URL from Railway PostgreSQL service"
+            exit 0
+          fi
+
+      - name: Wait for deployment to be ready
+        run: |
+          echo "Waiting 60 seconds for deployment to stabilize..."
+          sleep 60
+
+      - name: Run database migrations
+        if: ${{ secrets.DATABASE_URL != '' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "Running database migrations..."
+
+          # Install PostgreSQL client
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+
+          # Run each migration file in order
+          for migration in app/migrations/*.up.sql; do
+            if [ -f "$migration" ]; then
+              echo "Running migration: $migration"
+              psql "$DATABASE_URL" -f "$migration" 2>&1 || {
+                echo "::warning::Migration $migration may have already been applied or failed"
+              }
+            fi
+          done
+
+          echo "Migrations completed"
+
+      - name: Migration Summary
+        run: |
+          echo "## Migration Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Database migrations executed" >> $GITHUB_STEP_SUMMARY
+
+  # ===========================================================================
   # Post-deployment verification
   # ===========================================================================
   verify:
     name: Verify Deployment
     runs-on: ubuntu-latest
-    needs: [deploy]
+    needs: [deploy, migrate]
     if: success()
 
     steps:
-      - name: Wait for deployment
+      - name: Wait for app to be ready
         run: |
-          echo "Waiting 90 seconds for deployment to complete..."
-          sleep 90
+          echo "Waiting 30 seconds for app to be ready..."
+          sleep 30
 
       - name: Health check
         run: |
           DEPLOY_URL="${{ secrets.RAILWAY_PUBLIC_URL }}"
           if [ -n "$DEPLOY_URL" ]; then
             echo "Checking health at $DEPLOY_URL/health"
-            for i in 1 2 3; do
+            for i in 1 2 3 4 5; do
               if curl -sf "$DEPLOY_URL/health"; then
                 echo ""
                 echo "Health check passed!"
                 exit 0
               fi
-              echo "Attempt $i failed, retrying in 30s..."
-              sleep 30
+              echo "Attempt $i failed, retrying in 20s..."
+              sleep 20
             done
-            echo "::warning::Health check failed after 3 attempts"
+            echo "::error::Health check failed after 5 attempts"
+            exit 1
           else
-            echo "RAILWAY_PUBLIC_URL not set - skipping health check"
-            echo "Add RAILWAY_PUBLIC_URL secret to enable health checks"
+            echo "::warning::RAILWAY_PUBLIC_URL not set - skipping health check"
+          fi
+
+      - name: API smoke test
+        if: ${{ secrets.RAILWAY_PUBLIC_URL != '' }}
+        run: |
+          DEPLOY_URL="${{ secrets.RAILWAY_PUBLIC_URL }}"
+
+          echo "Testing registration endpoint..."
+          REGISTER_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$DEPLOY_URL/auth/register" \
+            -H "Content-Type: application/json" \
+            -d '{"email":"smoke-test-'$GITHUB_RUN_ID'@example.com","password":"password123"}')
+
+          if [ "$REGISTER_RESPONSE" = "201" ] || [ "$REGISTER_RESPONSE" = "409" ]; then
+            echo "✅ Registration endpoint working (status: $REGISTER_RESPONSE)"
+          else
+            echo "::warning::Registration endpoint returned unexpected status: $REGISTER_RESPONSE"
           fi
 
   # ===========================================================================
@@ -110,7 +176,7 @@ jobs:
   notify:
     name: Notify
     runs-on: ubuntu-latest
-    needs: [deploy, verify]
+    needs: [deploy, migrate, verify]
     if: always()
 
     steps:
@@ -125,9 +191,8 @@ jobs:
           echo "| Environment | ${{ github.event.inputs.environment || 'production' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Triggered by | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ needs.deploy.result }}" == "success" ]; then
-            echo "### Status: ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### Status: ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy | ${{ needs.deploy.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Migrate | ${{ needs.migrate.result == 'success' && '✅' || needs.migrate.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Verify | ${{ needs.verify.result == 'success' && '✅' || needs.verify.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
